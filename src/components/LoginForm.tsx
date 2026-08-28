@@ -1,10 +1,14 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import FormField from "@/components/FormField";
 
 export default function LoginForm() {
+  // Permite navegar entre páginas pelo código.
+  const router = useRouter();
+
   // Dados digitados pelo usuário.
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,13 +39,13 @@ export default function LoginForm() {
       hasError = true;
     }
 
-    // Se houver algum erro, não continuamos o login.
     if (hasError) {
       return;
     }
 
-    // Mais tarde, aqui enviaremos os dados para o backend.
-    console.log("Dados válidos. Pronto para enviar ao servidor.");
+    // Login temporário:
+    // enquanto não temos backend, seguimos direto para o dashboard.
+    router.push("/dashboard");
   }
 
   return (
