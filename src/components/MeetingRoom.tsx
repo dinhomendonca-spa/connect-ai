@@ -42,27 +42,38 @@ export default function MeetingRoom({
 }: MeetingRoomProps) {
   const router = useRouter();
 
+  // Vídeos exibidos na interface.
   const localVideoRef =
     useRef<HTMLVideoElement>(null);
 
   const remoteVideoRef =
     useRef<HTMLVideoElement>(null);
 
+  // Stream original da câmera e microfone.
   const mediaStreamRef =
     useRef<MediaStream | null>(null);
 
+  // Stream usado durante compartilhamento de tela.
+  const screenStreamRef =
+    useRef<MediaStream | null>(null);
+
+  // Comunicação Socket.IO.
   const socketRef =
     useRef<Socket | null>(null);
 
+  // Conexão direta WebRTC.
   const peerConnectionRef =
     useRef<RTCPeerConnection | null>(null);
 
+  // ICE candidates que chegam antes da conexão estar pronta.
   const pendingIceCandidatesRef =
     useRef<RTCIceCandidateInit[]>([]);
 
+  // Usado para rolar o chat para a mensagem mais recente.
   const messagesEndRef =
     useRef<HTMLDivElement>(null);
 
+  // Identidade.
   const [
     participantName,
     setParticipantName,
@@ -73,15 +84,22 @@ export default function MeetingRoom({
     setRemoteParticipantName,
   ] = useState("Participante");
 
+  // Controles de mídia.
   const [isMicOn, setIsMicOn] =
     useState(true);
 
   const [isCameraOn, setIsCameraOn] =
     useState(true);
 
+  const [
+    isScreenSharing,
+    setIsScreenSharing,
+  ] = useState(false);
+
   const [mediaError, setMediaError] =
     useState("");
 
+  // Participantes.
   const [
     participantCount,
     setParticipantCount,
@@ -100,6 +118,7 @@ export default function MeetingRoom({
   const [roomFull, setRoomFull] =
     useState(false);
 
+  // Chat.
   const [isChatOpen, setIsChatOpen] =
     useState(false);
 
@@ -108,6 +127,10 @@ export default function MeetingRoom({
 
   const [messages, setMessages] =
     useState<ChatMessage[]>([]);
+
+  // --------------------------------------------------
+  // IDENTIDADE
+  // --------------------------------------------------
 
   function getParticipantName() {
     try {
@@ -134,8 +157,8 @@ export default function MeetingRoom({
       );
     }
 
-    // Plano B para quem abrir a reunião
-    // sem passar pelo login.
+    // Plano B:
+    // participante que entrou sem passar pelo login.
     const fallbackName =
       sessionStorage.getItem(
         FALLBACK_PARTICIPANT_KEY
@@ -159,6 +182,10 @@ export default function MeetingRoom({
 
     return generatedName;
   }
+
+  // --------------------------------------------------
+  // WEBRTC
+  // --------------------------------------------------
 
   function clearRemoteParticipant() {
     peerConnectionRef.current?.close();
@@ -198,20 +225,45 @@ export default function MeetingRoom({
     peerConnectionRef.current =
       peerConnection;
 
-    const localStream =
+    const cameraStream =
       mediaStreamRef.current;
 
-    if (localStream) {
-      localStream
-        .getTracks()
-        .forEach((track) => {
-          peerConnection.addTrack(
-            track,
-            localStream
-          );
-        });
+    const screenStream =
+      screenStreamRef.current;
+
+    // Áudio continua vindo sempre
+    // do microfone original.
+    const audioTrack =
+      cameraStream?.getAudioTracks()[0];
+
+    if (audioTrack && cameraStream) {
+      peerConnection.addTrack(
+        audioTrack,
+        cameraStream
+      );
     }
 
+    // Se já estivermos compartilhando tela,
+    // envia a tela para o novo participante.
+    // Caso contrário, envia a câmera.
+    const activeVideoTrack =
+      screenStream?.getVideoTracks()[0] ??
+      cameraStream?.getVideoTracks()[0];
+
+    const activeVideoStream =
+      screenStream ?? cameraStream;
+
+    if (
+      activeVideoTrack &&
+      activeVideoStream
+    ) {
+      peerConnection.addTrack(
+        activeVideoTrack,
+        activeVideoStream
+      );
+    }
+
+    // Recebe vídeo/áudio remoto.
     peerConnection.ontrack = (event) => {
       const remoteStream =
         event.streams[0];
@@ -227,6 +279,7 @@ export default function MeetingRoom({
       setIsRemoteConnected(true);
     };
 
+    // Envia ICE candidates.
     peerConnection.onicecandidate = (
       event
     ) => {
@@ -295,6 +348,153 @@ export default function MeetingRoom({
     pendingIceCandidatesRef.current = [];
   }
 
+  // Troca somente o vídeo enviado pelo WebRTC.
+  async function replaceOutgoingVideoTrack(
+    newTrack: MediaStreamTrack
+  ) {
+    const peerConnection =
+      peerConnectionRef.current;
+
+    if (!peerConnection) {
+      return;
+    }
+
+    const videoSender =
+      peerConnection
+        .getSenders()
+        .find(
+          (sender) =>
+            sender.track?.kind === "video"
+        );
+
+    if (!videoSender) {
+      return;
+    }
+
+    try {
+      await videoSender.replaceTrack(
+        newTrack
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao trocar faixa de vídeo:",
+        error
+      );
+    }
+  }
+
+  // --------------------------------------------------
+  // COMPARTILHAMENTO DE TELA
+  // --------------------------------------------------
+
+  async function startScreenSharing() {
+    try {
+      if (
+        !navigator.mediaDevices
+          .getDisplayMedia
+      ) {
+        setMediaError(
+          "Seu navegador não oferece suporte ao compartilhamento de tela."
+        );
+
+        return;
+      }
+
+      const screenStream =
+        await navigator.mediaDevices
+          .getDisplayMedia({
+            video: true,
+            audio: false,
+          });
+
+      const screenTrack =
+        screenStream.getVideoTracks()[0];
+
+      if (!screenTrack) {
+        return;
+      }
+
+      screenStreamRef.current =
+        screenStream;
+
+      // Troca a câmera pela tela enviada
+      // para o outro participante.
+      await replaceOutgoingVideoTrack(
+        screenTrack
+      );
+
+      // Mostra nossa própria tela
+      // na prévia local.
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject =
+          screenStream;
+      }
+
+      setIsScreenSharing(true);
+
+      // Se o usuário clicar em
+      // "Parar compartilhamento"
+      // pelo próprio Chrome.
+      screenTrack.onended = () => {
+        void stopScreenSharing();
+      };
+    } catch (error) {
+      // O navegador também lança erro
+      // quando o usuário simplesmente cancela
+      // a janela de seleção de tela.
+      console.log(
+        "Compartilhamento de tela cancelado ou indisponível:",
+        error
+      );
+    }
+  }
+
+  async function stopScreenSharing() {
+    const cameraStream =
+      mediaStreamRef.current;
+
+    const cameraTrack =
+      cameraStream?.getVideoTracks()[0];
+
+    // Volta a enviar a câmera.
+    if (cameraTrack) {
+      await replaceOutgoingVideoTrack(
+        cameraTrack
+      );
+    }
+
+    // Encerra o stream de tela.
+    screenStreamRef.current
+      ?.getTracks()
+      .forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
+
+    screenStreamRef.current = null;
+
+    // Volta a mostrar a câmera local.
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject =
+        cameraStream ?? null;
+    }
+
+    setIsScreenSharing(false);
+  }
+
+  async function toggleScreenSharing() {
+    if (isScreenSharing) {
+      await stopScreenSharing();
+      return;
+    }
+
+    await startScreenSharing();
+  }
+
+  // --------------------------------------------------
+  // INICIALIZAÇÃO DA REUNIÃO
+  // --------------------------------------------------
+
   useEffect(() => {
     let componentActive = true;
 
@@ -306,14 +506,19 @@ export default function MeetingRoom({
     );
 
     async function startMeeting() {
+      // ---------------------------
+      // Câmera e microfone
+      // ---------------------------
+
       try {
         setMediaError("");
 
         const stream =
-          await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true,
-          });
+          await navigator.mediaDevices
+            .getUserMedia({
+              video: true,
+              audio: true,
+            });
 
         if (!componentActive) {
           stream
@@ -325,7 +530,8 @@ export default function MeetingRoom({
           return;
         }
 
-        mediaStreamRef.current = stream;
+        mediaStreamRef.current =
+          stream;
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject =
@@ -367,6 +573,10 @@ export default function MeetingRoom({
         return;
       }
 
+      // ---------------------------
+      // Socket.IO
+      // ---------------------------
+
       const socket = io();
 
       socketRef.current = socket;
@@ -384,6 +594,7 @@ export default function MeetingRoom({
         });
       });
 
+      // Quem já estava na sala.
       socket.on(
         "existing-participants",
         async ({
@@ -411,11 +622,13 @@ export default function MeetingRoom({
 
           try {
             const offer =
-              await peerConnection.createOffer();
+              await peerConnection
+                .createOffer();
 
-            await peerConnection.setLocalDescription(
-              offer
-            );
+            await peerConnection
+              .setLocalDescription(
+                offer
+              );
 
             socket.emit(
               "webrtc-offer",
@@ -433,6 +646,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Novo participante entrou.
       socket.on(
         "participant-joined",
         ({
@@ -447,7 +661,9 @@ export default function MeetingRoom({
             participantId
           );
 
-          if (joinedParticipantName) {
+          if (
+            joinedParticipantName
+          ) {
             setRemoteParticipantName(
               joinedParticipantName
             );
@@ -455,6 +671,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Recebe oferta WebRTC.
       socket.on(
         "webrtc-offer",
         async ({
@@ -483,25 +700,29 @@ export default function MeetingRoom({
             );
 
           try {
-            await peerConnection.setRemoteDescription(
-              offer
-            );
+            await peerConnection
+              .setRemoteDescription(
+                offer
+              );
 
             await flushPendingIceCandidates(
               peerConnection
             );
 
             const answer =
-              await peerConnection.createAnswer();
+              await peerConnection
+                .createAnswer();
 
-            await peerConnection.setLocalDescription(
-              answer
-            );
+            await peerConnection
+              .setLocalDescription(
+                answer
+              );
 
             socket.emit(
               "webrtc-answer",
               {
-                targetId: senderId,
+                targetId:
+                  senderId,
                 answer,
               }
             );
@@ -514,6 +735,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Recebe resposta WebRTC.
       socket.on(
         "webrtc-answer",
         async ({
@@ -539,9 +761,10 @@ export default function MeetingRoom({
           }
 
           try {
-            await peerConnection.setRemoteDescription(
-              answer
-            );
+            await peerConnection
+              .setRemoteDescription(
+                answer
+              );
 
             await flushPendingIceCandidates(
               peerConnection
@@ -555,6 +778,7 @@ export default function MeetingRoom({
         }
       );
 
+      // ICE candidate recebido.
       socket.on(
         "webrtc-ice-candidate",
         async ({
@@ -569,19 +793,21 @@ export default function MeetingRoom({
 
           if (
             !peerConnection ||
-            !peerConnection.remoteDescription
+            !peerConnection
+              .remoteDescription
           ) {
-            pendingIceCandidatesRef.current.push(
-              candidate
-            );
+            pendingIceCandidatesRef
+              .current
+              .push(candidate);
 
             return;
           }
 
           try {
-            await peerConnection.addIceCandidate(
-              candidate
-            );
+            await peerConnection
+              .addIceCandidate(
+                candidate
+              );
           } catch (error) {
             console.error(
               "Erro no ICE candidate:",
@@ -591,6 +817,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Quantidade de participantes.
       socket.on(
         "room-participants",
         ({
@@ -598,10 +825,13 @@ export default function MeetingRoom({
         }: {
           count: number;
         }) => {
-          setParticipantCount(count);
+          setParticipantCount(
+            count
+          );
         }
       );
 
+      // Participante saiu.
       socket.on(
         "participant-left",
         () => {
@@ -609,6 +839,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Sala cheia.
       socket.on(
         "room-full",
         () => {
@@ -616,6 +847,7 @@ export default function MeetingRoom({
         }
       );
 
+      // Mensagem recebida.
       socket.on(
         "chat-message",
         ({
@@ -650,6 +882,7 @@ export default function MeetingRoom({
 
     startMeeting();
 
+    // Limpeza ao sair da página.
     return () => {
       componentActive = false;
 
@@ -659,73 +892,51 @@ export default function MeetingRoom({
           track.stop();
         });
 
-      peerConnectionRef.current?.close();
-      socketRef.current?.disconnect();
+      screenStreamRef.current
+        ?.getTracks()
+        .forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+
+      peerConnectionRef.current
+        ?.close();
+
+      socketRef.current
+        ?.disconnect();
 
       mediaStreamRef.current = null;
+      screenStreamRef.current = null;
       peerConnectionRef.current = null;
       socketRef.current = null;
     };
   }, [roomId]);
+
+  // --------------------------------------------------
+  // CHAT
+  // --------------------------------------------------
 
   useEffect(() => {
     if (!isChatOpen) {
       return;
     }
 
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
+    messagesEndRef.current
+      ?.scrollIntoView({
+        behavior: "smooth",
+      });
   }, [messages, isChatOpen]);
-
-  function toggleMicrophone() {
-    const tracks =
-      mediaStreamRef.current?.getAudioTracks();
-
-    if (
-      !tracks ||
-      tracks.length === 0
-    ) {
-      return;
-    }
-
-    const nextState = !isMicOn;
-
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
-
-    setIsMicOn(nextState);
-  }
-
-  function toggleCamera() {
-    const tracks =
-      mediaStreamRef.current?.getVideoTracks();
-
-    if (
-      !tracks ||
-      tracks.length === 0
-    ) {
-      return;
-    }
-
-    const nextState = !isCameraOn;
-
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
-
-    setIsCameraOn(nextState);
-  }
 
   function sendMessage(
     event: FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
-    const text = newMessage.trim();
+    const text =
+      newMessage.trim();
 
-    const socket = socketRef.current;
+    const socket =
+      socketRef.current;
 
     if (!text || !socket) {
       return;
@@ -774,11 +985,60 @@ export default function MeetingRoom({
     setNewMessage("");
   }
 
+  // --------------------------------------------------
+  // CONTROLES
+  // --------------------------------------------------
+
+  function toggleMicrophone() {
+    const tracks =
+      mediaStreamRef.current
+        ?.getAudioTracks();
+
+    if (
+      !tracks ||
+      tracks.length === 0
+    ) {
+      return;
+    }
+
+    const nextState =
+      !isMicOn;
+
+    tracks.forEach((track) => {
+      track.enabled =
+        nextState;
+    });
+
+    setIsMicOn(nextState);
+  }
+
+  function toggleCamera() {
+    const tracks =
+      mediaStreamRef.current
+        ?.getVideoTracks();
+
+    if (
+      !tracks ||
+      tracks.length === 0
+    ) {
+      return;
+    }
+
+    const nextState =
+      !isCameraOn;
+
+    tracks.forEach((track) => {
+      track.enabled =
+        nextState;
+    });
+
+    setIsCameraOn(nextState);
+  }
+
   async function copyRoomCode() {
     try {
-      await navigator.clipboard.writeText(
-        roomId
-      );
+      await navigator.clipboard
+        .writeText(roomId);
 
       alert(
         "Código da sala copiado!"
@@ -793,9 +1053,10 @@ export default function MeetingRoom({
 
   async function copyInviteLink() {
     try {
-      await navigator.clipboard.writeText(
-        window.location.href
-      );
+      await navigator.clipboard
+        .writeText(
+          window.location.href
+        );
 
       alert(
         "Link da reunião copiado!"
@@ -815,11 +1076,27 @@ export default function MeetingRoom({
         track.stop();
       });
 
-    peerConnectionRef.current?.close();
-    socketRef.current?.disconnect();
+    screenStreamRef.current
+      ?.getTracks()
+      .forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
 
-    router.push("/dashboard");
+    peerConnectionRef.current
+      ?.close();
+
+    socketRef.current
+      ?.disconnect();
+
+    router.push(
+      "/dashboard"
+    );
   }
+
+  // --------------------------------------------------
+  // INTERFACE
+  // --------------------------------------------------
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white">
@@ -844,8 +1121,8 @@ export default function MeetingRoom({
               </p>
 
               <p className="mt-1 text-xs text-zinc-500">
-                {participantCount} de 2
-                participantes
+                {participantCount} de
+                2 participantes
               </p>
             </div>
 
@@ -893,23 +1170,41 @@ export default function MeetingRoom({
           }`}
         >
           <div>
+            {/* VÍDEOS */}
             <section className="grid gap-6 md:grid-cols-2">
+              {/* Local */}
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
                 <video
-                  ref={localVideoRef}
+                  ref={
+                    localVideoRef
+                  }
                   autoPlay
                   playsInline
                   muted
                   className={`h-full w-full object-cover ${
+                    isScreenSharing ||
                     isCameraOn
                       ? ""
                       : "hidden"
                   }`}
                 />
 
-                {!isCameraOn && (
-                  <div className="flex h-full items-center justify-center">
-                    👤 Câmera desligada
+                {!isCameraOn &&
+                  !isScreenSharing && (
+                    <div className="flex h-full flex-col items-center justify-center gap-3">
+                      <div className="text-5xl">
+                        👤
+                      </div>
+
+                      <p>
+                        Câmera desligada
+                      </p>
+                    </div>
+                  )}
+
+                {isScreenSharing && (
+                  <div className="absolute right-4 top-4 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold">
+                    🖥️ Compartilhando tela
                   </div>
                 )}
 
@@ -919,11 +1214,14 @@ export default function MeetingRoom({
                 </div>
               </div>
 
+              {/* Remoto */}
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
                 {remoteParticipantId ? (
                   <>
                     <video
-                      ref={remoteVideoRef}
+                      ref={
+                        remoteVideoRef
+                      }
                       autoPlay
                       playsInline
                       className="h-full w-full object-cover"
@@ -951,12 +1249,16 @@ export default function MeetingRoom({
                       Aguardando participante
                     </h2>
 
+                    <p className="mt-2 text-sm text-zinc-500">
+                      Compartilhe o convite para alguém entrar na reunião.
+                    </p>
+
                     <button
                       type="button"
                       onClick={
                         copyInviteLink
                       }
-                      className="mt-5 cursor-pointer rounded-lg border border-blue-600 px-4 py-2 text-blue-400"
+                      className="mt-5 cursor-pointer rounded-lg border border-blue-600 px-4 py-2 text-blue-400 transition hover:bg-blue-950"
                     >
                       🔗 Copiar link
                     </button>
@@ -965,19 +1267,25 @@ export default function MeetingRoom({
               </div>
             </section>
 
+            {/* ERRO */}
             {mediaError && (
               <div className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-red-300">
                 {mediaError}
               </div>
             )}
 
+            {/* CONTROLES */}
             <section className="mt-6 flex flex-wrap justify-center gap-3">
               <button
                 type="button"
                 onClick={
                   toggleMicrophone
                 }
-                className="cursor-pointer rounded-lg border border-emerald-600 px-5 py-3"
+                className={`cursor-pointer rounded-lg border px-5 py-3 transition ${
+                  isMicOn
+                    ? "border-emerald-600 text-emerald-400"
+                    : "border-yellow-600 text-yellow-400"
+                }`}
               >
                 {isMicOn
                   ? "🎤 Microfone ligado"
@@ -986,12 +1294,35 @@ export default function MeetingRoom({
 
               <button
                 type="button"
-                onClick={toggleCamera}
-                className="cursor-pointer rounded-lg border border-emerald-600 px-5 py-3"
+                onClick={
+                  toggleCamera
+                }
+                className={`cursor-pointer rounded-lg border px-5 py-3 transition ${
+                  isCameraOn
+                    ? "border-emerald-600 text-emerald-400"
+                    : "border-yellow-600 text-yellow-400"
+                }`}
               >
                 {isCameraOn
                   ? "📹 Câmera ligada"
                   : "🚫 Câmera desligada"}
+              </button>
+
+              {/* NOVO */}
+              <button
+                type="button"
+                onClick={() => {
+                  void toggleScreenSharing();
+                }}
+                className={`cursor-pointer rounded-lg border px-5 py-3 font-medium transition ${
+                  isScreenSharing
+                    ? "border-purple-500 bg-purple-600 text-white"
+                    : "border-purple-600 text-purple-400 hover:bg-purple-950"
+                }`}
+              >
+                {isScreenSharing
+                  ? "⏹️ Parar compartilhamento"
+                  : "🖥️ Compartilhar tela"}
               </button>
 
               <button
@@ -1001,7 +1332,7 @@ export default function MeetingRoom({
                     !isChatOpen
                   )
                 }
-                className="cursor-pointer rounded-lg border border-blue-600 px-5 py-3 text-blue-400"
+                className="cursor-pointer rounded-lg border border-blue-600 px-5 py-3 text-blue-400 transition hover:bg-blue-950"
               >
                 💬{" "}
                 {isChatOpen
@@ -1011,32 +1342,45 @@ export default function MeetingRoom({
 
               <button
                 type="button"
-                onClick={leaveMeeting}
-                className="cursor-pointer rounded-lg bg-red-600 px-5 py-3"
+                onClick={
+                  leaveMeeting
+                }
+                className="cursor-pointer rounded-lg bg-red-600 px-5 py-3 font-semibold transition hover:bg-red-500"
               >
                 📞 Encerrar
               </button>
             </section>
           </div>
 
+          {/* CHAT */}
           {isChatOpen && (
             <aside className="flex min-h-[550px] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
               <div className="border-b border-zinc-800 p-4">
                 <h2 className="font-bold">
                   💬 Chat
                 </h2>
+
+                <p className="mt-1 text-xs text-zinc-500">
+                  {messages.length}{" "}
+                  {messages.length === 1
+                    ? "mensagem"
+                    : "mensagens"}
+                </p>
               </div>
 
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-                {messages.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center text-zinc-500">
+                {messages.length ===
+                0 ? (
+                  <div className="flex flex-1 items-center justify-center text-center text-zinc-500">
                     Nenhuma mensagem ainda
                   </div>
                 ) : (
                   messages.map(
                     (message) => (
                       <div
-                        key={message.id}
+                        key={
+                          message.id
+                        }
                         className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                           message.isOwn
                             ? "ml-auto bg-blue-600"
@@ -1050,7 +1394,7 @@ export default function MeetingRoom({
                               : message.senderName}
                           </strong>
 
-                          <span>
+                          <span className="opacity-70">
                             {
                               message.time
                             }
@@ -1068,26 +1412,35 @@ export default function MeetingRoom({
                 )}
 
                 <div
-                  ref={messagesEndRef}
+                  ref={
+                    messagesEndRef
+                  }
                 />
               </div>
 
               <form
-                onSubmit={sendMessage}
+                onSubmit={
+                  sendMessage
+                }
                 className="border-t border-zinc-800 p-4"
               >
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={newMessage}
-                    onChange={(event) =>
+                    value={
+                      newMessage
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setNewMessage(
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     placeholder="Digite uma mensagem..."
                     autoComplete="off"
-                    className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 outline-none focus:border-blue-500"
+                    className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 outline-none transition focus:border-blue-500"
                   />
 
                   <button
@@ -1095,7 +1448,7 @@ export default function MeetingRoom({
                     disabled={
                       !newMessage.trim()
                     }
-                    className="cursor-pointer rounded-lg bg-blue-600 px-4 py-3 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                    className="cursor-pointer rounded-lg bg-blue-600 px-4 py-3 font-semibold transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Enviar
                   </button>
