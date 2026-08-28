@@ -1,36 +1,117 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ConnectAI
 
-## Getting Started
+Plataforma Full Stack de comunicação em tempo real com recursos de Inteligência Artificial.
 
-First, run the development server:
+> 🚧 Projeto em desenvolvimento.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+O **ConnectAI** está sendo desenvolvido como um projeto de estudo e portfólio, com foco em tecnologias utilizadas no mercado de desenvolvimento Full Stack.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+A proposta é construir uma plataforma onde usuários possam criar contas, participar de salas, trocar mensagens em tempo real, realizar chamadas de vídeo e utilizar recursos de Inteligência Artificial.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 🎯 Objetivo do projeto
 
-## Learn More
+O projeto tem como objetivo praticar a construção de uma aplicação moderna desde o início, passando por frontend, backend, banco de dados, comunicação em tempo real, infraestrutura e deploy.
 
-To learn more about Next.js, take a look at the following resources:
+A aplicação será evoluída gradualmente, adicionando novas funcionalidades conforme cada tecnologia é estudada.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## ✅ Funcionalidades atuais
 
-## Deploy on Vercel
+Atualmente o projeto possui:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Página de login;
+- Página de cadastro;
+- Navegação entre as páginas;
+- Componentes React reutilizáveis;
+- Controle de formulários com estado;
+- Validação de campos;
+- Validação de formato de e-mail;
+- Validação de confirmação de senha;
+- Mensagens de erro específicas para cada campo;
+- Interface responsiva utilizando Tailwind CSS.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## 🛠️ Tecnologias utilizadas atualmente
+
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- ESLint
+- Git
+- GitHub
+
+---
+
+## 🗺️ Roadmap
+
+O projeto será expandido com as seguintes tecnologias e funcionalidades:
+
+### Frontend
+
+- Dashboard do usuário;
+- Perfil;
+- Salas de reunião;
+- Chat;
+- Interface de videochamada;
+- Histórico de reuniões.
+
+### Backend
+
+- Node.js;
+- NestJS;
+- APIs REST;
+- Autenticação;
+- Controle de usuários e permissões.
+
+### Banco de dados
+
+- PostgreSQL;
+- Modelagem de usuários;
+- Reuniões;
+- Mensagens;
+- Histórico.
+
+### Tempo real
+
+- WebSockets;
+- Presença de usuários;
+- Chat em tempo real;
+- Redis;
+- WebRTC;
+- Áudio e vídeo em tempo real.
+
+### Inteligência Artificial
+
+- Integração com LLMs;
+- Resumo de reuniões;
+- Identificação de tópicos;
+- Geração de tarefas e próximos passos.
+
+### Infraestrutura
+
+- Docker;
+- Testes;
+- Segurança;
+- Logs;
+- Deploy em nuvem.
+
+---
+
+## 📁 Estrutura atual
+
+```text
+src/
+├── app/
+│   ├── cadastro/
+│   │   └── page.tsx
+│   └── page.tsx
+│
+└── components/
+    ├── FormField.tsx
+    ├── LoginForm.tsx
+    └── RegisterForm.tsx
