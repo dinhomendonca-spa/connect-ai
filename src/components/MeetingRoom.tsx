@@ -31,49 +31,76 @@ type CurrentUser = {
   email: string;
 };
 
+type MediaStatus = {
+  isMicOn: boolean;
+  isCameraOn: boolean;
+  isScreenSharing: boolean;
+};
+
+type RoomParticipant = {
+  participantId: string;
+  participantName: string;
+  mediaStatus: MediaStatus;
+};
+
 const CURRENT_USER_SESSION_KEY =
   "connectai-current-user";
 
 const FALLBACK_PARTICIPANT_KEY =
   "connectai-participant-name";
 
+const DEFAULT_MEDIA_STATUS: MediaStatus = {
+  isMicOn: true,
+  isCameraOn: true,
+  isScreenSharing: false,
+};
+
 export default function MeetingRoom({
   roomId,
 }: MeetingRoomProps) {
   const router = useRouter();
 
-  // Vídeos exibidos na interface.
+  // --------------------------------------------------
+  // REFERÊNCIAS
+  // --------------------------------------------------
+
   const localVideoRef =
     useRef<HTMLVideoElement>(null);
 
   const remoteVideoRef =
     useRef<HTMLVideoElement>(null);
 
-  // Stream original da câmera e microfone.
   const mediaStreamRef =
     useRef<MediaStream | null>(null);
 
-  // Stream usado durante compartilhamento de tela.
   const screenStreamRef =
     useRef<MediaStream | null>(null);
 
-  // Comunicação Socket.IO.
   const socketRef =
     useRef<Socket | null>(null);
 
-  // Conexão direta WebRTC.
   const peerConnectionRef =
-    useRef<RTCPeerConnection | null>(null);
+    useRef<RTCPeerConnection | null>(
+      null
+    );
 
-  // ICE candidates que chegam antes da conexão estar pronta.
   const pendingIceCandidatesRef =
-    useRef<RTCIceCandidateInit[]>([]);
+    useRef<RTCIceCandidateInit[]>(
+      []
+    );
 
-  // Usado para rolar o chat para a mensagem mais recente.
   const messagesEndRef =
     useRef<HTMLDivElement>(null);
 
-  // Identidade.
+  const localMediaStatusRef =
+    useRef<MediaStatus>({
+      ...DEFAULT_MEDIA_STATUS,
+    });
+
+  // --------------------------------------------------
+  // IDENTIDADE
+  // --------------------------------------------------
+
   const [
     participantName,
     setParticipantName,
@@ -84,7 +111,10 @@ export default function MeetingRoom({
     setRemoteParticipantName,
   ] = useState("Participante");
 
-  // Controles de mídia.
+  // --------------------------------------------------
+  // MÍDIA LOCAL
+  // --------------------------------------------------
+
   const [isMicOn, setIsMicOn] =
     useState(true);
 
@@ -99,7 +129,10 @@ export default function MeetingRoom({
   const [mediaError, setMediaError] =
     useState("");
 
-  // Participantes.
+  // --------------------------------------------------
+  // PARTICIPANTE REMOTO
+  // --------------------------------------------------
+
   const [
     participantCount,
     setParticipantCount,
@@ -115,10 +148,20 @@ export default function MeetingRoom({
     setIsRemoteConnected,
   ] = useState(false);
 
+  const [
+    remoteMediaStatus,
+    setRemoteMediaStatus,
+  ] = useState<MediaStatus>({
+    ...DEFAULT_MEDIA_STATUS,
+  });
+
   const [roomFull, setRoomFull] =
     useState(false);
 
-  // Chat.
+  // --------------------------------------------------
+  // CHAT
+  // --------------------------------------------------
+
   const [isChatOpen, setIsChatOpen] =
     useState(false);
 
@@ -129,7 +172,7 @@ export default function MeetingRoom({
     useState<ChatMessage[]>([]);
 
   // --------------------------------------------------
-  // IDENTIDADE
+  // IDENTIDADE DO USUÁRIO
   // --------------------------------------------------
 
   function getParticipantName() {
@@ -141,7 +184,9 @@ export default function MeetingRoom({
 
       if (storedCurrentUser) {
         const currentUser: CurrentUser =
-          JSON.parse(storedCurrentUser);
+          JSON.parse(
+            storedCurrentUser
+          );
 
         if (
           currentUser.name &&
@@ -152,13 +197,11 @@ export default function MeetingRoom({
       }
     } catch (error) {
       console.error(
-        "Erro ao recuperar usuário da sessão:",
+        "Erro ao recuperar usuário:",
         error
       );
     }
 
-    // Plano B:
-    // participante que entrou sem passar pelo login.
     const fallbackName =
       sessionStorage.getItem(
         FALLBACK_PARTICIPANT_KEY
@@ -168,9 +211,11 @@ export default function MeetingRoom({
       return fallbackName;
     }
 
-    const randomNumber = Math.floor(
-      1000 + Math.random() * 9000
-    );
+    const randomNumber =
+      Math.floor(
+        1000 +
+          Math.random() * 9000
+      );
 
     const generatedName =
       `Participante-${randomNumber}`;
@@ -184,6 +229,30 @@ export default function MeetingRoom({
   }
 
   // --------------------------------------------------
+  // STATUS DE MÍDIA
+  // --------------------------------------------------
+
+  function broadcastMediaStatus(
+    changes: Partial<MediaStatus>
+  ) {
+    const nextStatus = {
+      ...localMediaStatusRef.current,
+      ...changes,
+    };
+
+    localMediaStatusRef.current =
+      nextStatus;
+
+    socketRef.current?.emit(
+      "media-status-change",
+      {
+        roomId,
+        status: nextStatus,
+      }
+    );
+  }
+
+  // --------------------------------------------------
   // WEBRTC
   // --------------------------------------------------
 
@@ -192,7 +261,8 @@ export default function MeetingRoom({
 
     peerConnectionRef.current = null;
 
-    pendingIceCandidatesRef.current = [];
+    pendingIceCandidatesRef.current =
+      [];
 
     setRemoteParticipantId(null);
 
@@ -200,10 +270,15 @@ export default function MeetingRoom({
       "Participante"
     );
 
+    setRemoteMediaStatus({
+      ...DEFAULT_MEDIA_STATUS,
+    });
+
     setIsRemoteConnected(false);
 
     if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
+      remoteVideoRef.current.srcObject =
+        null;
     }
   }
 
@@ -231,21 +306,22 @@ export default function MeetingRoom({
     const screenStream =
       screenStreamRef.current;
 
-    // Áudio continua vindo sempre
-    // do microfone original.
+    // Áudio.
     const audioTrack =
       cameraStream?.getAudioTracks()[0];
 
-    if (audioTrack && cameraStream) {
+    if (
+      audioTrack &&
+      cameraStream
+    ) {
       peerConnection.addTrack(
         audioTrack,
         cameraStream
       );
     }
 
-    // Se já estivermos compartilhando tela,
-    // envia a tela para o novo participante.
-    // Caso contrário, envia a câmera.
+    // Vídeo atual:
+    // tela ou câmera.
     const activeVideoTrack =
       screenStream?.getVideoTracks()[0] ??
       cameraStream?.getVideoTracks()[0];
@@ -263,8 +339,9 @@ export default function MeetingRoom({
       );
     }
 
-    // Recebe vídeo/áudio remoto.
-    peerConnection.ontrack = (event) => {
+    peerConnection.ontrack = (
+      event
+    ) => {
       const remoteStream =
         event.streams[0];
 
@@ -279,7 +356,6 @@ export default function MeetingRoom({
       setIsRemoteConnected(true);
     };
 
-    // Envia ICE candidates.
     peerConnection.onicecandidate = (
       event
     ) => {
@@ -294,6 +370,7 @@ export default function MeetingRoom({
         "webrtc-ice-candidate",
         {
           targetId,
+
           candidate:
             event.candidate.toJSON(),
         }
@@ -310,7 +387,9 @@ export default function MeetingRoom({
           state
         );
 
-        if (state === "connected") {
+        if (
+          state === "connected"
+        ) {
           setIsRemoteConnected(true);
         }
 
@@ -319,7 +398,9 @@ export default function MeetingRoom({
           state === "closed" ||
           state === "disconnected"
         ) {
-          setIsRemoteConnected(false);
+          setIsRemoteConnected(
+            false
+          );
         }
       };
 
@@ -339,16 +420,16 @@ export default function MeetingRoom({
         );
       } catch (error) {
         console.error(
-          "Erro ao adicionar ICE candidate:",
+          "Erro no ICE candidate:",
           error
         );
       }
     }
 
-    pendingIceCandidatesRef.current = [];
+    pendingIceCandidatesRef.current =
+      [];
   }
 
-  // Troca somente o vídeo enviado pelo WebRTC.
   async function replaceOutgoingVideoTrack(
     newTrack: MediaStreamTrack
   ) {
@@ -364,7 +445,8 @@ export default function MeetingRoom({
         .getSenders()
         .find(
           (sender) =>
-            sender.track?.kind === "video"
+            sender.track?.kind ===
+            "video"
         );
 
     if (!videoSender) {
@@ -377,7 +459,7 @@ export default function MeetingRoom({
       );
     } catch (error) {
       console.error(
-        "Erro ao trocar faixa de vídeo:",
+        "Erro ao trocar vídeo:",
         error
       );
     }
@@ -389,17 +471,6 @@ export default function MeetingRoom({
 
   async function startScreenSharing() {
     try {
-      if (
-        !navigator.mediaDevices
-          .getDisplayMedia
-      ) {
-        setMediaError(
-          "Seu navegador não oferece suporte ao compartilhamento de tela."
-        );
-
-        return;
-      }
-
       const screenStream =
         await navigator.mediaDevices
           .getDisplayMedia({
@@ -417,14 +488,10 @@ export default function MeetingRoom({
       screenStreamRef.current =
         screenStream;
 
-      // Troca a câmera pela tela enviada
-      // para o outro participante.
       await replaceOutgoingVideoTrack(
         screenTrack
       );
 
-      // Mostra nossa própria tela
-      // na prévia local.
       if (localVideoRef.current) {
         localVideoRef.current.srcObject =
           screenStream;
@@ -432,18 +499,16 @@ export default function MeetingRoom({
 
       setIsScreenSharing(true);
 
-      // Se o usuário clicar em
-      // "Parar compartilhamento"
-      // pelo próprio Chrome.
+      broadcastMediaStatus({
+        isScreenSharing: true,
+      });
+
       screenTrack.onended = () => {
         void stopScreenSharing();
       };
     } catch (error) {
-      // O navegador também lança erro
-      // quando o usuário simplesmente cancela
-      // a janela de seleção de tela.
       console.log(
-        "Compartilhamento de tela cancelado ou indisponível:",
+        "Compartilhamento cancelado:",
         error
       );
     }
@@ -456,14 +521,12 @@ export default function MeetingRoom({
     const cameraTrack =
       cameraStream?.getVideoTracks()[0];
 
-    // Volta a enviar a câmera.
     if (cameraTrack) {
       await replaceOutgoingVideoTrack(
         cameraTrack
       );
     }
 
-    // Encerra o stream de tela.
     screenStreamRef.current
       ?.getTracks()
       .forEach((track) => {
@@ -473,13 +536,16 @@ export default function MeetingRoom({
 
     screenStreamRef.current = null;
 
-    // Volta a mostrar a câmera local.
     if (localVideoRef.current) {
       localVideoRef.current.srcObject =
         cameraStream ?? null;
     }
 
     setIsScreenSharing(false);
+
+    broadcastMediaStatus({
+      isScreenSharing: false,
+    });
   }
 
   async function toggleScreenSharing() {
@@ -492,7 +558,7 @@ export default function MeetingRoom({
   }
 
   // --------------------------------------------------
-  // INICIALIZAÇÃO DA REUNIÃO
+  // INICIALIZAÇÃO
   // --------------------------------------------------
 
   useEffect(() => {
@@ -506,9 +572,9 @@ export default function MeetingRoom({
     );
 
     async function startMeeting() {
-      // ---------------------------
-      // Câmera e microfone
-      // ---------------------------
+      // --------------------------------
+      // CÂMERA E MICROFONE
+      // --------------------------------
 
       try {
         setMediaError("");
@@ -544,17 +610,33 @@ export default function MeetingRoom({
         const videoTrack =
           stream.getVideoTracks()[0];
 
-        if (audioTrack) {
-          setIsMicOn(
-            audioTrack.enabled
-          );
-        }
+        const initialMicState =
+          audioTrack?.enabled ??
+          false;
 
-        if (videoTrack) {
-          setIsCameraOn(
-            videoTrack.enabled
-          );
-        }
+        const initialCameraState =
+          videoTrack?.enabled ??
+          false;
+
+        setIsMicOn(
+          initialMicState
+        );
+
+        setIsCameraOn(
+          initialCameraState
+        );
+
+        localMediaStatusRef.current =
+          {
+            isMicOn:
+              initialMicState,
+
+            isCameraOn:
+              initialCameraState,
+
+            isScreenSharing:
+              false,
+          };
       } catch (error) {
         console.error(
           "Erro ao acessar mídia:",
@@ -562,20 +644,28 @@ export default function MeetingRoom({
         );
 
         setMediaError(
-          "Não foi possível acessar a câmera ou o microfone. Verifique as permissões do navegador."
+          "Não foi possível acessar a câmera ou o microfone."
         );
 
         setIsMicOn(false);
         setIsCameraOn(false);
+
+        localMediaStatusRef.current =
+          {
+            isMicOn: false,
+            isCameraOn: false,
+            isScreenSharing:
+              false,
+          };
       }
 
       if (!componentActive) {
         return;
       }
 
-      // ---------------------------
-      // Socket.IO
-      // ---------------------------
+      // --------------------------------
+      // SOCKET.IO
+      // --------------------------------
 
       const socket = io();
 
@@ -589,35 +679,52 @@ export default function MeetingRoom({
 
         socket.emit("join-room", {
           roomId,
+
           participantName:
             myParticipantName,
+
+          mediaStatus:
+            localMediaStatusRef.current,
         });
       });
 
-      // Quem já estava na sala.
+      // --------------------------------
+      // PARTICIPANTE QUE JÁ ESTAVA
+      // --------------------------------
+
       socket.on(
         "existing-participants",
         async ({
-          participantIds,
+          participants,
         }: {
-          participantIds: string[];
+          participants:
+            RoomParticipant[];
         }) => {
           if (
-            participantIds.length === 0
+            participants.length ===
+            0
           ) {
             return;
           }
 
-          const targetId =
-            participantIds[0];
+          const participant =
+            participants[0];
 
           setRemoteParticipantId(
-            targetId
+            participant.participantId
+          );
+
+          setRemoteParticipantName(
+            participant.participantName
+          );
+
+          setRemoteMediaStatus(
+            participant.mediaStatus
           );
 
           const peerConnection =
             createPeerConnection(
-              targetId
+              participant.participantId
             );
 
           try {
@@ -633,45 +740,69 @@ export default function MeetingRoom({
             socket.emit(
               "webrtc-offer",
               {
-                targetId,
+                targetId:
+                  participant.participantId,
+
                 offer,
               }
             );
           } catch (error) {
             console.error(
-              "Erro ao criar oferta WebRTC:",
+              "Erro ao criar oferta:",
               error
             );
           }
         }
       );
 
-      // Novo participante entrou.
+      // --------------------------------
+      // NOVO PARTICIPANTE
+      // --------------------------------
+
       socket.on(
         "participant-joined",
         ({
           participantId,
           participantName:
-            joinedParticipantName,
-        }: {
-          participantId: string;
-          participantName: string;
-        }) => {
+            joinedName,
+          mediaStatus,
+        }: RoomParticipant) => {
           setRemoteParticipantId(
             participantId
           );
 
-          if (
-            joinedParticipantName
-          ) {
-            setRemoteParticipantName(
-              joinedParticipantName
-            );
-          }
+          setRemoteParticipantName(
+            joinedName
+          );
+
+          setRemoteMediaStatus(
+            mediaStatus
+          );
         }
       );
 
-      // Recebe oferta WebRTC.
+      // --------------------------------
+      // STATUS REMOTO
+      // --------------------------------
+
+      socket.on(
+        "participant-media-status",
+        ({
+          mediaStatus,
+        }: {
+          participantId: string;
+          mediaStatus: MediaStatus;
+        }) => {
+          setRemoteMediaStatus(
+            mediaStatus
+          );
+        }
+      );
+
+      // --------------------------------
+      // OFERTA WEBRTC
+      // --------------------------------
+
       socket.on(
         "webrtc-offer",
         async ({
@@ -681,6 +812,7 @@ export default function MeetingRoom({
         }: {
           senderId: string;
           senderName: string;
+
           offer:
             RTCSessionDescriptionInit;
         }) => {
@@ -688,11 +820,10 @@ export default function MeetingRoom({
             senderId
           );
 
-          if (senderName) {
-            setRemoteParticipantName(
-              senderName
-            );
-          }
+          setRemoteParticipantName(
+            senderName ||
+              "Participante"
+          );
 
           const peerConnection =
             createPeerConnection(
@@ -723,19 +854,23 @@ export default function MeetingRoom({
               {
                 targetId:
                   senderId,
+
                 answer,
               }
             );
           } catch (error) {
             console.error(
-              "Erro ao responder oferta WebRTC:",
+              "Erro ao responder oferta:",
               error
             );
           }
         }
       );
 
-      // Recebe resposta WebRTC.
+      // --------------------------------
+      // RESPOSTA WEBRTC
+      // --------------------------------
+
       socket.on(
         "webrtc-answer",
         async ({
@@ -744,6 +879,7 @@ export default function MeetingRoom({
         }: {
           senderId: string;
           senderName: string;
+
           answer:
             RTCSessionDescriptionInit;
         }) => {
@@ -771,20 +907,24 @@ export default function MeetingRoom({
             );
           } catch (error) {
             console.error(
-              "Erro ao aplicar resposta WebRTC:",
+              "Erro ao aplicar resposta:",
               error
             );
           }
         }
       );
 
-      // ICE candidate recebido.
+      // --------------------------------
+      // ICE
+      // --------------------------------
+
       socket.on(
         "webrtc-ice-candidate",
         async ({
           candidate,
         }: {
           senderId: string;
+
           candidate:
             RTCIceCandidateInit;
         }) => {
@@ -797,8 +937,9 @@ export default function MeetingRoom({
               .remoteDescription
           ) {
             pendingIceCandidatesRef
-              .current
-              .push(candidate);
+              .current.push(
+                candidate
+              );
 
             return;
           }
@@ -810,14 +951,17 @@ export default function MeetingRoom({
               );
           } catch (error) {
             console.error(
-              "Erro no ICE candidate:",
+              "Erro no ICE:",
               error
             );
           }
         }
       );
 
-      // Quantidade de participantes.
+      // --------------------------------
+      // QUANTIDADE
+      // --------------------------------
+
       socket.on(
         "room-participants",
         ({
@@ -831,7 +975,10 @@ export default function MeetingRoom({
         }
       );
 
-      // Participante saiu.
+      // --------------------------------
+      // SAÍDA
+      // --------------------------------
+
       socket.on(
         "participant-left",
         () => {
@@ -839,7 +986,6 @@ export default function MeetingRoom({
         }
       );
 
-      // Sala cheia.
       socket.on(
         "room-full",
         () => {
@@ -847,7 +993,10 @@ export default function MeetingRoom({
         }
       );
 
-      // Mensagem recebida.
+      // --------------------------------
+      // CHAT
+      // --------------------------------
+
       socket.on(
         "chat-message",
         ({
@@ -865,13 +1014,16 @@ export default function MeetingRoom({
           setMessages(
             (currentMessages) => [
               ...currentMessages,
+
               {
                 id,
                 text,
                 time,
+
                 senderName:
                   senderName ||
                   "Participante",
+
                 isOwn: false,
               },
             ]
@@ -882,7 +1034,6 @@ export default function MeetingRoom({
 
     startMeeting();
 
-    // Limpeza ao sair da página.
     return () => {
       componentActive = false;
 
@@ -906,14 +1057,19 @@ export default function MeetingRoom({
         ?.disconnect();
 
       mediaStreamRef.current = null;
-      screenStreamRef.current = null;
-      peerConnectionRef.current = null;
+
+      screenStreamRef.current =
+        null;
+
+      peerConnectionRef.current =
+        null;
+
       socketRef.current = null;
     };
   }, [roomId]);
 
   // --------------------------------------------------
-  // CHAT
+  // CHAT: ROLAGEM AUTOMÁTICA
   // --------------------------------------------------
 
   useEffect(() => {
@@ -926,6 +1082,72 @@ export default function MeetingRoom({
         behavior: "smooth",
       });
   }, [messages, isChatOpen]);
+
+  // --------------------------------------------------
+  // MICROFONE
+  // --------------------------------------------------
+
+  function toggleMicrophone() {
+    const tracks =
+      mediaStreamRef.current
+        ?.getAudioTracks();
+
+    if (
+      !tracks ||
+      tracks.length === 0
+    ) {
+      return;
+    }
+
+    const nextState =
+      !isMicOn;
+
+    tracks.forEach((track) => {
+      track.enabled =
+        nextState;
+    });
+
+    setIsMicOn(nextState);
+
+    broadcastMediaStatus({
+      isMicOn: nextState,
+    });
+  }
+
+  // --------------------------------------------------
+  // CÂMERA
+  // --------------------------------------------------
+
+  function toggleCamera() {
+    const tracks =
+      mediaStreamRef.current
+        ?.getVideoTracks();
+
+    if (
+      !tracks ||
+      tracks.length === 0
+    ) {
+      return;
+    }
+
+    const nextState =
+      !isCameraOn;
+
+    tracks.forEach((track) => {
+      track.enabled =
+        nextState;
+    });
+
+    setIsCameraOn(nextState);
+
+    broadcastMediaStatus({
+      isCameraOn: nextState,
+    });
+  }
+
+  // --------------------------------------------------
+  // CHAT
+  // --------------------------------------------------
 
   function sendMessage(
     event: FormEvent<HTMLFormElement>
@@ -958,8 +1180,10 @@ export default function MeetingRoom({
       id: messageId,
       text,
       time,
+
       senderName:
         participantName || "Você",
+
       isOwn: true,
     };
 
@@ -974,6 +1198,7 @@ export default function MeetingRoom({
       "send-chat-message",
       {
         roomId,
+
         message: {
           id: messageId,
           text,
@@ -986,59 +1211,14 @@ export default function MeetingRoom({
   }
 
   // --------------------------------------------------
-  // CONTROLES
+  // CONVITE
   // --------------------------------------------------
-
-  function toggleMicrophone() {
-    const tracks =
-      mediaStreamRef.current
-        ?.getAudioTracks();
-
-    if (
-      !tracks ||
-      tracks.length === 0
-    ) {
-      return;
-    }
-
-    const nextState =
-      !isMicOn;
-
-    tracks.forEach((track) => {
-      track.enabled =
-        nextState;
-    });
-
-    setIsMicOn(nextState);
-  }
-
-  function toggleCamera() {
-    const tracks =
-      mediaStreamRef.current
-        ?.getVideoTracks();
-
-    if (
-      !tracks ||
-      tracks.length === 0
-    ) {
-      return;
-    }
-
-    const nextState =
-      !isCameraOn;
-
-    tracks.forEach((track) => {
-      track.enabled =
-        nextState;
-    });
-
-    setIsCameraOn(nextState);
-  }
 
   async function copyRoomCode() {
     try {
-      await navigator.clipboard
-        .writeText(roomId);
+      await navigator.clipboard.writeText(
+        roomId
+      );
 
       alert(
         "Código da sala copiado!"
@@ -1053,10 +1233,9 @@ export default function MeetingRoom({
 
   async function copyInviteLink() {
     try {
-      await navigator.clipboard
-        .writeText(
-          window.location.href
-        );
+      await navigator.clipboard.writeText(
+        window.location.href
+      );
 
       alert(
         "Link da reunião copiado!"
@@ -1068,6 +1247,10 @@ export default function MeetingRoom({
       );
     }
   }
+
+  // --------------------------------------------------
+  // ENCERRAR
+  // --------------------------------------------------
 
   function leaveMeeting() {
     mediaStreamRef.current
@@ -1089,14 +1272,16 @@ export default function MeetingRoom({
     socketRef.current
       ?.disconnect();
 
-    router.push(
-      "/dashboard"
-    );
+    router.push("/dashboard");
   }
 
   // --------------------------------------------------
   // INTERFACE
   // --------------------------------------------------
+
+  const remoteVideoAvailable =
+    remoteMediaStatus.isCameraOn ||
+    remoteMediaStatus.isScreenSharing;
 
   return (
     <main className="min-h-screen bg-zinc-950 text-white">
@@ -1121,8 +1306,8 @@ export default function MeetingRoom({
               </p>
 
               <p className="mt-1 text-xs text-zinc-500">
-                {participantCount} de
-                2 participantes
+                {participantCount} de 2
+                participantes
               </p>
             </div>
 
@@ -1157,8 +1342,8 @@ export default function MeetingRoom({
 
         {roomFull && (
           <div className="mb-5 rounded-xl border border-yellow-800 bg-yellow-950/40 p-4 text-yellow-300">
-            Esta sala já possui
-            2 participantes.
+            Esta sala já possui 2
+            participantes.
           </div>
         )}
 
@@ -1170,14 +1355,11 @@ export default function MeetingRoom({
           }`}
         >
           <div>
-            {/* VÍDEOS */}
             <section className="grid gap-6 md:grid-cols-2">
-              {/* Local */}
+              {/* LOCAL */}
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
                 <video
-                  ref={
-                    localVideoRef
-                  }
+                  ref={localVideoRef}
                   autoPlay
                   playsInline
                   muted
@@ -1191,12 +1373,12 @@ export default function MeetingRoom({
 
                 {!isCameraOn &&
                   !isScreenSharing && (
-                    <div className="flex h-full flex-col items-center justify-center gap-3">
+                    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                       <div className="text-5xl">
                         👤
                       </div>
 
-                      <p>
+                      <p className="font-semibold">
                         Câmera desligada
                       </p>
                     </div>
@@ -1208,23 +1390,31 @@ export default function MeetingRoom({
                   </div>
                 )}
 
+                {!isMicOn && (
+                  <div className="absolute left-4 top-4 rounded-lg bg-yellow-600 px-3 py-2 text-xs font-semibold">
+                    🔇 Microfone desligado
+                  </div>
+                )}
+
                 <div className="absolute bottom-4 left-4 rounded-lg bg-black/70 px-3 py-2 text-sm">
                   Você —{" "}
                   {participantName}
                 </div>
               </div>
 
-              {/* Remoto */}
+              {/* REMOTO */}
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
                 {remoteParticipantId ? (
                   <>
                     <video
-                      ref={
-                        remoteVideoRef
-                      }
+                      ref={remoteVideoRef}
                       autoPlay
                       playsInline
-                      className="h-full w-full object-cover"
+                      className={`h-full w-full object-cover ${
+                        remoteVideoAvailable
+                          ? ""
+                          : "hidden"
+                      }`}
                     />
 
                     {!isRemoteConnected && (
@@ -1232,6 +1422,46 @@ export default function MeetingRoom({
                         🔄 Conectando...
                       </div>
                     )}
+
+                    {isRemoteConnected &&
+                      !remoteVideoAvailable && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-900 text-center">
+                          <div className="text-5xl">
+                            👤
+                          </div>
+
+                          <p className="font-semibold">
+                            {
+                              remoteParticipantName
+                            }
+                          </p>
+
+                          <p className="text-sm text-zinc-400">
+                            🚫 Câmera desligada
+                          </p>
+                        </div>
+                      )}
+
+                    <div className="absolute right-4 top-4 flex flex-col items-end gap-2">
+                      {remoteMediaStatus.isScreenSharing && (
+                        <div className="rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold">
+                          🖥️ Compartilhando tela
+                        </div>
+                      )}
+
+                      {!remoteMediaStatus.isMicOn && (
+                        <div className="rounded-lg bg-yellow-600 px-3 py-2 text-xs font-semibold">
+                          🔇 Microfone desligado
+                        </div>
+                      )}
+
+                      {!remoteMediaStatus.isCameraOn &&
+                        !remoteMediaStatus.isScreenSharing && (
+                          <div className="rounded-lg bg-yellow-600 px-3 py-2 text-xs font-semibold">
+                            🚫 Câmera desligada
+                          </div>
+                        )}
+                    </div>
 
                     <div className="absolute bottom-4 left-4 rounded-lg bg-black/70 px-3 py-2 text-sm">
                       {
@@ -1250,7 +1480,8 @@ export default function MeetingRoom({
                     </h2>
 
                     <p className="mt-2 text-sm text-zinc-500">
-                      Compartilhe o convite para alguém entrar na reunião.
+                      Compartilhe o convite
+                      para alguém entrar.
                     </p>
 
                     <button
@@ -1267,7 +1498,6 @@ export default function MeetingRoom({
               </div>
             </section>
 
-            {/* ERRO */}
             {mediaError && (
               <div className="mt-4 rounded-xl border border-red-900 bg-red-950/40 p-4 text-red-300">
                 {mediaError}
@@ -1308,7 +1538,6 @@ export default function MeetingRoom({
                   : "🚫 Câmera desligada"}
               </button>
 
-              {/* NOVO */}
               <button
                 type="button"
                 onClick={() => {
@@ -1371,7 +1600,7 @@ export default function MeetingRoom({
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
                 {messages.length ===
                 0 ? (
-                  <div className="flex flex-1 items-center justify-center text-center text-zinc-500">
+                  <div className="flex flex-1 items-center justify-center text-zinc-500">
                     Nenhuma mensagem ainda
                   </div>
                 ) : (
@@ -1419,9 +1648,7 @@ export default function MeetingRoom({
               </div>
 
               <form
-                onSubmit={
-                  sendMessage
-                }
+                onSubmit={sendMessage}
                 className="border-t border-zinc-800 p-4"
               >
                 <div className="flex gap-2">
