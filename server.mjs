@@ -55,12 +55,79 @@ function normalizeMediaStatus(
   };
 }
 
+// --------------------------------------------------
+// TRANSCRIÇÕES DAS SALAS
+// --------------------------------------------------
+
+// Nesta primeira versão, a transcrição fica
+// guardada na memória do servidor.
+//
+// Depois, quando refinarmos o sistema,
+// podemos substituir isso por banco de dados.
+const roomTranscripts = new Map();
+
+// Quando uma sala fica vazia,
+// mantemos sua transcrição por 2 horas.
+const roomCleanupTimers = new Map();
+
+function getRoomTranscript(roomName) {
+  if (!roomTranscripts.has(roomName)) {
+    roomTranscripts.set(roomName, []);
+  }
+
+  return roomTranscripts.get(roomName);
+}
+
+function cancelRoomCleanup(roomName) {
+  const timer =
+    roomCleanupTimers.get(roomName);
+
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  roomCleanupTimers.delete(roomName);
+}
+
+function scheduleRoomCleanup(roomName) {
+  cancelRoomCleanup(roomName);
+
+  const timer = setTimeout(() => {
+    const room =
+      io.sockets.adapter.rooms.get(
+        roomName
+      );
+
+    if (!room || room.size === 0) {
+      roomTranscripts.delete(
+        roomName
+      );
+    }
+
+    roomCleanupTimers.delete(
+      roomName
+    );
+  }, 2 * 60 * 60 * 1000);
+
+  roomCleanupTimers.set(
+    roomName,
+    timer
+  );
+}
+
 io.on("connection", (socket) => {
-  console.log("✅ Socket conectado:", socket.id);
+  console.log(
+    "✅ Socket conectado:",
+    socket.id
+  );
 
   socket.data.mediaStatus = {
     ...defaultMediaStatus,
   };
+
+  socket.data.isTranscribing =
+    false;
 
   // --------------------------------------------------
   // ENTRAR NA SALA
@@ -77,17 +144,21 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const roomName = getRoomName(roomId);
+      const roomName =
+        getRoomName(roomId);
+
+      cancelRoomCleanup(roomName);
 
       const currentRoom =
-        io.sockets.adapter.rooms.get(roomName);
+        io.sockets.adapter.rooms.get(
+          roomName
+        );
 
       const existingParticipantIds =
         currentRoom
           ? Array.from(currentRoom)
           : [];
 
-      // Nesta fase, cada sala terá no máximo 2 pessoas.
       if (
         existingParticipantIds.length >= 2
       ) {
@@ -95,14 +166,20 @@ io.on("connection", (socket) => {
         return;
       }
 
-      socket.data.roomName = roomName;
-      socket.data.roomId = roomId;
+      socket.data.roomName =
+        roomName;
+
+      socket.data.roomId =
+        roomId;
 
       socket.data.participantName =
-        participantName || "Participante";
+        participantName ||
+        "Participante";
 
       socket.data.mediaStatus =
-        normalizeMediaStatus(mediaStatus);
+        normalizeMediaStatus(
+          mediaStatus
+        );
 
       const existingParticipants =
         existingParticipantIds.map(
@@ -124,6 +201,11 @@ io.on("connection", (socket) => {
                 participantSocket?.data
                   ?.mediaStatus ||
                 defaultMediaStatus,
+
+              isTranscribing:
+                participantSocket?.data
+                  ?.isTranscribing ??
+                false,
             };
           }
         );
@@ -134,8 +216,6 @@ io.on("connection", (socket) => {
         `👤 ${socket.data.participantName} entrou em ${roomId}`
       );
 
-      // Informa ao novo participante
-      // quem já estava na sala.
       socket.emit(
         "existing-participants",
         {
@@ -144,19 +224,39 @@ io.on("connection", (socket) => {
         }
       );
 
-      // Avisa quem já estava na sala
-      // que uma nova pessoa entrou.
+      // Envia para quem entrou
+      // a transcrição que já existe.
+      socket.emit(
+        "transcript-history",
+        {
+          entries:
+            getRoomTranscript(
+              roomName
+            ),
+        }
+      );
+
       socket
         .to(roomName)
-        .emit("participant-joined", {
-          participantId: socket.id,
+        .emit(
+          "participant-joined",
+          {
+            participantId:
+              socket.id,
 
-          participantName:
-            socket.data.participantName,
+            participantName:
+              socket.data
+                .participantName,
 
-          mediaStatus:
-            socket.data.mediaStatus,
-        });
+            mediaStatus:
+              socket.data
+                .mediaStatus,
+
+            isTranscribing:
+              socket.data
+                .isTranscribing,
+          }
+        );
 
       const participantCount =
         io.sockets.adapter.rooms.get(
@@ -166,20 +266,24 @@ io.on("connection", (socket) => {
       io.to(roomName).emit(
         "room-participants",
         {
-          count: participantCount,
+          count:
+            participantCount,
         }
       );
     }
   );
 
   // --------------------------------------------------
-  // STATUS DE MICROFONE / CÂMERA / TELA
+  // STATUS DE MÍDIA
   // --------------------------------------------------
 
   socket.on(
     "media-status-change",
     ({ roomId, status }) => {
-      if (!roomId || !status) {
+      if (
+        !roomId ||
+        !status
+      ) {
         return;
       }
 
@@ -224,20 +328,206 @@ io.on("connection", (socket) => {
   );
 
   // --------------------------------------------------
-  // WEBRTC — OFERTA
+  // STATUS DA TRANSCRIÇÃO
+  // --------------------------------------------------
+
+  socket.on(
+    "transcription-status-change",
+    ({
+      roomId,
+      isTranscribing,
+    }) => {
+      if (
+        !roomId ||
+        typeof isTranscribing !==
+          "boolean"
+      ) {
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        return;
+      }
+
+      socket.data.isTranscribing =
+        isTranscribing;
+
+      socket
+        .to(roomName)
+        .emit(
+          "participant-transcription-status",
+          {
+            participantId:
+              socket.id,
+
+            participantName:
+              socket.data
+                .participantName ||
+              "Participante",
+
+            isTranscribing,
+          }
+        );
+    }
+  );
+
+  // --------------------------------------------------
+  // NOVA FALA TRANSCRITA
+  // --------------------------------------------------
+
+  socket.on(
+    "transcript-entry",
+    ({ roomId, entry }) => {
+      if (
+        !roomId ||
+        !entry?.text
+      ) {
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        return;
+      }
+
+      const text =
+        String(entry.text)
+          .trim()
+          .slice(0, 3000);
+
+      if (!text) {
+        return;
+      }
+
+      const savedEntry = {
+        id:
+          entry.id ||
+          `${Date.now()}-${socket.id}`,
+
+        senderId:
+          socket.id,
+
+        senderName:
+          socket.data
+            .participantName ||
+          "Participante",
+
+        text,
+
+        time:
+          entry.time ||
+          new Date()
+            .toLocaleTimeString(
+              "pt-BR",
+              {
+                hour: "2-digit",
+                minute:
+                  "2-digit",
+              }
+            ),
+
+        createdAt:
+          Date.now(),
+      };
+
+      const transcript =
+        getRoomTranscript(
+          roomName
+        );
+
+      transcript.push(
+        savedEntry
+      );
+
+      // Evita crescimento sem limite
+      // durante nossos testes.
+      if (
+        transcript.length > 2000
+      ) {
+        transcript.splice(
+          0,
+          transcript.length -
+            2000
+        );
+      }
+
+      console.log(
+        `📝 ${savedEntry.senderName}: ${savedEntry.text}`
+      );
+
+      // O próprio navegador já
+      // adiciona sua fala localmente.
+      // O servidor envia para os outros.
+      socket
+        .to(roomName)
+        .emit(
+          "transcript-entry",
+          savedEntry
+        );
+    }
+  );
+
+  // Já deixamos isso preparado
+  // para a etapa do relatório.
+  socket.on(
+    "request-transcript",
+    ({ roomId }) => {
+      if (!roomId) {
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        return;
+      }
+
+      socket.emit(
+        "transcript-history",
+        {
+          entries:
+            getRoomTranscript(
+              roomName
+            ),
+        }
+      );
+    }
+  );
+
+  // --------------------------------------------------
+  // WEBRTC
   // --------------------------------------------------
 
   socket.on(
     "webrtc-offer",
     ({ targetId, offer }) => {
-      if (!targetId || !offer) {
+      if (
+        !targetId ||
+        !offer
+      ) {
         return;
       }
 
       io.to(targetId).emit(
         "webrtc-offer",
         {
-          senderId: socket.id,
+          senderId:
+            socket.id,
 
           senderName:
             socket.data
@@ -250,21 +540,24 @@ io.on("connection", (socket) => {
     }
   );
 
-  // --------------------------------------------------
-  // WEBRTC — RESPOSTA
-  // --------------------------------------------------
-
   socket.on(
     "webrtc-answer",
-    ({ targetId, answer }) => {
-      if (!targetId || !answer) {
+    ({
+      targetId,
+      answer,
+    }) => {
+      if (
+        !targetId ||
+        !answer
+      ) {
         return;
       }
 
       io.to(targetId).emit(
         "webrtc-answer",
         {
-          senderId: socket.id,
+          senderId:
+            socket.id,
 
           senderName:
             socket.data
@@ -277,13 +570,12 @@ io.on("connection", (socket) => {
     }
   );
 
-  // --------------------------------------------------
-  // WEBRTC — ICE
-  // --------------------------------------------------
-
   socket.on(
     "webrtc-ice-candidate",
-    ({ targetId, candidate }) => {
+    ({
+      targetId,
+      candidate,
+    }) => {
       if (
         !targetId ||
         !candidate
@@ -294,7 +586,9 @@ io.on("connection", (socket) => {
       io.to(targetId).emit(
         "webrtc-ice-candidate",
         {
-          senderId: socket.id,
+          senderId:
+            socket.id,
+
           candidate,
         }
       );
@@ -307,7 +601,10 @@ io.on("connection", (socket) => {
 
   socket.on(
     "send-chat-message",
-    ({ roomId, message }) => {
+    ({
+      roomId,
+      message,
+    }) => {
       if (
         !roomId ||
         !message?.text
@@ -324,21 +621,25 @@ io.on("connection", (socket) => {
 
       socket
         .to(roomName)
-        .emit("chat-message", {
-          ...message,
+        .emit(
+          "chat-message",
+          {
+            ...message,
 
-          senderId: socket.id,
+            senderId:
+              socket.id,
 
-          senderName:
-            socket.data
-              .participantName ||
-            "Participante",
-        });
+            senderName:
+              socket.data
+                .participantName ||
+              "Participante",
+          }
+        );
     }
   );
 
   // --------------------------------------------------
-  // PARTICIPANTE SAINDO
+  // SAÍDA
   // --------------------------------------------------
 
   socket.on(
@@ -352,7 +653,8 @@ io.on("connection", (socket) => {
       }
 
       const participantName =
-        socket.data.participantName ||
+        socket.data
+          .participantName ||
         "Participante";
 
       const currentRoom =
@@ -362,8 +664,8 @@ io.on("connection", (socket) => {
 
       const participantCountAfterLeaving =
         Math.max(
-          (currentRoom?.size ?? 1) -
-            1,
+          (currentRoom?.size ??
+            1) - 1,
           0
         );
 
@@ -388,15 +690,27 @@ io.on("connection", (socket) => {
               participantCountAfterLeaving,
           }
         );
+
+      if (
+        participantCountAfterLeaving ===
+        0
+      ) {
+        scheduleRoomCleanup(
+          roomName
+        );
+      }
     }
   );
 
-  socket.on("disconnect", () => {
-    console.log(
-      "❌ Socket desconectado:",
-      socket.id
-    );
-  });
+  socket.on(
+    "disconnect",
+    () => {
+      console.log(
+        "❌ Socket desconectado:",
+        socket.id
+      );
+    }
+  );
 });
 
 httpServer.listen(
