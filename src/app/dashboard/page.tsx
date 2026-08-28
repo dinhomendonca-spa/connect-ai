@@ -1,55 +1,47 @@
+import DashboardCard from "@/components/DashboardCard";
+import DashboardHeader from "@/components/DashboardHeader";
+
+// Dados usados para montar os cards do Dashboard.
+const dashboardItems = [
+  {
+    id: 1,
+    title: "Nova reunião",
+    description: "Crie uma sala para iniciar uma nova conversa.",
+    href: "/reuniao/nova",
+  },
+  {
+    id: 2,
+    title: "Reuniões",
+    description: "Acompanhe suas reuniões agendadas e recentes.",
+    href: "/reunioes",
+  },
+  {
+    id: 3,
+    title: "Histórico",
+    description: "Consulte conversas e reuniões anteriores.",
+    href: "/historico",
+  },
+];
+
 export default function DashboardPage() {
-    return (
-      // Página principal que será exibida após o login.
-      <main className="min-h-screen bg-zinc-950 px-6 py-10 text-white">
-        <section className="mx-auto w-full max-w-5xl">
-          <header>
-            <p className="text-sm font-medium text-blue-400">
-              ConnectAI
-            </p>
-  
-            <h1 className="mt-2 text-3xl font-bold">
-              Dashboard
-            </h1>
-  
-            <p className="mt-2 text-zinc-400">
-              Bem-vindo ao seu espaço de comunicação.
-            </p>
-          </header>
-  
-          {/* Área onde adicionaremos as funcionalidades do usuário. */}
-          <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-              <h2 className="text-lg font-semibold">
-                Nova reunião
-              </h2>
-  
-              <p className="mt-2 text-sm text-zinc-400">
-                Crie uma sala para iniciar uma nova conversa.
-              </p>
-            </article>
-  
-            <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-              <h2 className="text-lg font-semibold">
-                Reuniões
-              </h2>
-  
-              <p className="mt-2 text-sm text-zinc-400">
-                Acompanhe suas reuniões agendadas e recentes.
-              </p>
-            </article>
-  
-            <article className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-              <h2 className="text-lg font-semibold">
-                Histórico
-              </h2>
-  
-              <p className="mt-2 text-sm text-zinc-400">
-                Consulte conversas e reuniões anteriores.
-              </p>
-            </article>
-          </section>
+  return (
+    // Página principal exibida após o login.
+    <main className="min-h-screen bg-zinc-950 px-6 py-8 text-white">
+      <section className="mx-auto w-full max-w-5xl">
+        <DashboardHeader />
+
+        {/* Os cards são gerados a partir dos dados da lista acima. */}
+        <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {dashboardItems.map((item) => (
+            <DashboardCard
+              key={item.id}
+              title={item.title}
+              description={item.description}
+              href={item.href}
+            />
+          ))}
         </section>
-      </main>
-    );
-  }
+      </section>
+    </main>
+  );
+}
