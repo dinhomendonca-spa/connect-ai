@@ -1,36 +1,72 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import FormField from "@/components/FormField";
 
-// Valida um formato simples de e-mail.
-// Não tenta cobrir todos os casos possíveis da internet,
-// apenas evita entradas claramente inválidas.
+type StoredUser = {
+  name: string;
+  email: string;
+};
+
+const USERS_STORAGE_KEY = "connectai-users";
+
 function isValidEmail(email: string) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   return emailRegex.test(email);
 }
 
+function getStoredUsers(): StoredUser[] {
+  try {
+    const storedUsers = localStorage.getItem(
+      USERS_STORAGE_KEY
+    );
+
+    if (!storedUsers) {
+      return [];
+    }
+
+    const parsedUsers = JSON.parse(storedUsers);
+
+    if (!Array.isArray(parsedUsers)) {
+      return [];
+    }
+
+    return parsedUsers;
+  } catch {
+    return [];
+  }
+}
+
 export default function RegisterForm() {
+  const router = useRouter();
+
   // Dados preenchidos pelo usuário.
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [
+    passwordConfirmation,
+    setPasswordConfirmation,
+  ] = useState("");
 
-  // Mensagens de erro específicas de cada campo.
+  // Mensagens de erro.
   const [nameError, setNameError] = useState("");
   const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
-  const [passwordConfirmationError, setPasswordConfirmationError] =
+  const [passwordError, setPasswordError] =
     useState("");
+  const [
+    passwordConfirmationError,
+    setPasswordConfirmationError,
+  ] = useState("");
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
-    // Limpa os erros da tentativa anterior.
     setNameError("");
     setEmailError("");
     setPasswordError("");
@@ -38,15 +74,20 @@ export default function RegisterForm() {
 
     let hasError = false;
 
-    if (!name.trim()) {
+    const normalizedName = name.trim();
+    const normalizedEmail = email
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedName) {
       setNameError("Digite seu nome.");
       hasError = true;
     }
 
-    if (!email.trim()) {
+    if (!normalizedEmail) {
       setEmailError("Digite seu e-mail.");
       hasError = true;
-    } else if (!isValidEmail(email)) {
+    } else if (!isValidEmail(normalizedEmail)) {
       setEmailError("Digite um e-mail válido.");
       hasError = true;
     }
@@ -55,15 +96,26 @@ export default function RegisterForm() {
       setPasswordError("Digite uma senha.");
       hasError = true;
     } else if (password.length < 6) {
-      setPasswordError("A senha deve ter pelo menos 6 caracteres.");
+      setPasswordError(
+        "A senha deve ter pelo menos 6 caracteres."
+      );
+
       hasError = true;
     }
 
     if (!passwordConfirmation.trim()) {
-      setPasswordConfirmationError("Confirme sua senha.");
+      setPasswordConfirmationError(
+        "Confirme sua senha."
+      );
+
       hasError = true;
-    } else if (passwordConfirmation !== password) {
-      setPasswordConfirmationError("As senhas não coincidem.");
+    } else if (
+      passwordConfirmation !== password
+    ) {
+      setPasswordConfirmationError(
+        "As senhas não coincidem."
+      );
+
       hasError = true;
     }
 
@@ -71,8 +123,41 @@ export default function RegisterForm() {
       return;
     }
 
-    // Mais tarde, aqui enviaremos os dados para o backend.
-    console.log("Cadastro validado com sucesso.");
+    const storedUsers = getStoredUsers();
+
+    const userAlreadyExists = storedUsers.some(
+      (user) =>
+        user.email.toLowerCase() === normalizedEmail
+    );
+
+    if (userAlreadyExists) {
+      setEmailError(
+        "Já existe uma conta cadastrada com este e-mail."
+      );
+
+      return;
+    }
+
+    const newUser: StoredUser = {
+      name: normalizedName,
+      email: normalizedEmail,
+    };
+
+    // Nesta fase do projeto guardamos apenas
+    // nome e e-mail.
+    // A senha NÃO é armazenada no navegador.
+    const updatedUsers = [
+      ...storedUsers,
+      newUser,
+    ];
+
+    localStorage.setItem(
+      USERS_STORAGE_KEY,
+      JSON.stringify(updatedUsers)
+    );
+
+    // Depois do cadastro, vai para o login.
+    router.push("/");
   }
 
   return (
@@ -87,7 +172,9 @@ export default function RegisterForm() {
         placeholder="Digite seu nome"
         value={name}
         error={nameError}
-        onChange={(event) => setName(event.target.value)}
+        onChange={(event) =>
+          setName(event.target.value)
+        }
       />
 
       <FormField
@@ -97,7 +184,9 @@ export default function RegisterForm() {
         placeholder="seu@email.com"
         value={email}
         error={emailError}
-        onChange={(event) => setEmail(event.target.value)}
+        onChange={(event) =>
+          setEmail(event.target.value)
+        }
       />
 
       <FormField
@@ -107,7 +196,9 @@ export default function RegisterForm() {
         placeholder="Crie uma senha"
         value={password}
         error={passwordError}
-        onChange={(event) => setPassword(event.target.value)}
+        onChange={(event) =>
+          setPassword(event.target.value)
+        }
       />
 
       <FormField
@@ -118,7 +209,9 @@ export default function RegisterForm() {
         value={passwordConfirmation}
         error={passwordConfirmationError}
         onChange={(event) =>
-          setPasswordConfirmation(event.target.value)
+          setPasswordConfirmation(
+            event.target.value
+          )
         }
       />
 

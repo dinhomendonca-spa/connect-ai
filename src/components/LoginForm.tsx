@@ -5,29 +5,75 @@ import { useRouter } from "next/navigation";
 
 import FormField from "@/components/FormField";
 
+type StoredUser = {
+  name: string;
+  email: string;
+};
+
+const USERS_STORAGE_KEY = "connectai-users";
+
+const CURRENT_USER_SESSION_KEY =
+  "connectai-current-user";
+
+function isValidEmail(email: string) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  return emailRegex.test(email);
+}
+
+function getStoredUsers(): StoredUser[] {
+  try {
+    const storedUsers = localStorage.getItem(
+      USERS_STORAGE_KEY
+    );
+
+    if (!storedUsers) {
+      return [];
+    }
+
+    const parsedUsers = JSON.parse(storedUsers);
+
+    if (!Array.isArray(parsedUsers)) {
+      return [];
+    }
+
+    return parsedUsers;
+  } catch {
+    return [];
+  }
+}
+
 export default function LoginForm() {
-  // Permite navegar entre páginas pelo código.
   const router = useRouter();
 
-  // Dados digitados pelo usuário.
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Mensagens de erro específicas para cada campo.
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] = useState("");
+  const [emailError, setEmailError] =
+    useState("");
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  const [passwordError, setPasswordError] =
+    useState("");
+
+  function handleSubmit(
+    event: FormEvent<HTMLFormElement>
+  ) {
     event.preventDefault();
 
-    // Limpa erros da tentativa anterior.
     setEmailError("");
     setPasswordError("");
 
     let hasError = false;
 
-    if (!email.trim()) {
+    const normalizedEmail = email
+      .trim()
+      .toLowerCase();
+
+    if (!normalizedEmail) {
       setEmailError("Digite seu e-mail.");
+      hasError = true;
+    } else if (!isValidEmail(normalizedEmail)) {
+      setEmailError("Digite um e-mail válido.");
       hasError = true;
     }
 
@@ -35,7 +81,10 @@ export default function LoginForm() {
       setPasswordError("Digite sua senha.");
       hasError = true;
     } else if (password.length < 6) {
-      setPasswordError("A senha deve ter pelo menos 6 caracteres.");
+      setPasswordError(
+        "A senha deve ter pelo menos 6 caracteres."
+      );
+
       hasError = true;
     }
 
@@ -43,8 +92,32 @@ export default function LoginForm() {
       return;
     }
 
-    // Login temporário:
-    // enquanto não temos backend, seguimos direto para o dashboard.
+    const storedUsers = getStoredUsers();
+
+    const user = storedUsers.find(
+      (storedUser) =>
+        storedUser.email.toLowerCase() ===
+        normalizedEmail
+    );
+
+    if (!user) {
+      setEmailError(
+        "Conta não encontrada. Crie uma conta primeiro."
+      );
+
+      return;
+    }
+
+    // Autenticação temporária do protótipo.
+    // Não verificamos senha de verdade porque
+    // ainda não existe backend.
+    //
+    // Nunca armazenamos a senha no navegador.
+    sessionStorage.setItem(
+      CURRENT_USER_SESSION_KEY,
+      JSON.stringify(user)
+    );
+
     router.push("/dashboard");
   }
 
@@ -60,7 +133,9 @@ export default function LoginForm() {
         placeholder="seu@email.com"
         value={email}
         error={emailError}
-        onChange={(event) => setEmail(event.target.value)}
+        onChange={(event) =>
+          setEmail(event.target.value)
+        }
       />
 
       <FormField
@@ -70,7 +145,9 @@ export default function LoginForm() {
         placeholder="Digite sua senha"
         value={password}
         error={passwordError}
-        onChange={(event) => setPassword(event.target.value)}
+        onChange={(event) =>
+          setPassword(event.target.value)
+        }
       />
 
       <button

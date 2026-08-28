@@ -26,6 +26,17 @@ type ChatMessage = {
   isOwn: boolean;
 };
 
+type CurrentUser = {
+  name: string;
+  email: string;
+};
+
+const CURRENT_USER_SESSION_KEY =
+  "connectai-current-user";
+
+const FALLBACK_PARTICIPANT_KEY =
+  "connectai-participant-name";
+
 export default function MeetingRoom({
   roomId,
 }: MeetingRoomProps) {
@@ -52,8 +63,10 @@ export default function MeetingRoom({
   const messagesEndRef =
     useRef<HTMLDivElement>(null);
 
-  const [participantName, setParticipantName] =
-    useState("");
+  const [
+    participantName,
+    setParticipantName,
+  ] = useState("");
 
   const [
     remoteParticipantName,
@@ -97,29 +110,54 @@ export default function MeetingRoom({
     useState<ChatMessage[]>([]);
 
   function getParticipantName() {
-    const storedName =
-      sessionStorage.getItem(
-        "connectai-participant-name"
-      );
+    try {
+      const storedCurrentUser =
+        sessionStorage.getItem(
+          CURRENT_USER_SESSION_KEY
+        );
 
-    if (storedName) {
-      return storedName;
+      if (storedCurrentUser) {
+        const currentUser: CurrentUser =
+          JSON.parse(storedCurrentUser);
+
+        if (
+          currentUser.name &&
+          currentUser.name.trim()
+        ) {
+          return currentUser.name.trim();
+        }
+      }
+    } catch (error) {
+      console.error(
+        "Erro ao recuperar usuário da sessão:",
+        error
+      );
     }
 
-    const randomNumber =
-      Math.floor(
-        1000 + Math.random() * 9000
+    // Plano B para quem abrir a reunião
+    // sem passar pelo login.
+    const fallbackName =
+      sessionStorage.getItem(
+        FALLBACK_PARTICIPANT_KEY
       );
 
-    const newName =
+    if (fallbackName) {
+      return fallbackName;
+    }
+
+    const randomNumber = Math.floor(
+      1000 + Math.random() * 9000
+    );
+
+    const generatedName =
       `Participante-${randomNumber}`;
 
     sessionStorage.setItem(
-      "connectai-participant-name",
-      newName
+      FALLBACK_PARTICIPANT_KEY,
+      generatedName
     );
 
-    return newName;
+    return generatedName;
   }
 
   function clearRemoteParticipant() {
@@ -138,8 +176,7 @@ export default function MeetingRoom({
     setIsRemoteConnected(false);
 
     if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject =
-        null;
+      remoteVideoRef.current.srcObject = null;
     }
   }
 
@@ -175,9 +212,7 @@ export default function MeetingRoom({
         });
     }
 
-    peerConnection.ontrack = (
-      event
-    ) => {
+    peerConnection.ontrack = (event) => {
       const remoteStream =
         event.streams[0];
 
@@ -218,7 +253,7 @@ export default function MeetingRoom({
           peerConnection.connectionState;
 
         console.log(
-          "WebRTC:",
+          "Estado WebRTC:",
           state
         );
 
@@ -272,12 +307,13 @@ export default function MeetingRoom({
 
     async function startMeeting() {
       try {
+        setMediaError("");
+
         const stream =
-          await navigator.mediaDevices
-            .getUserMedia({
-              video: true,
-              audio: true,
-            });
+          await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
 
         if (!componentActive) {
           stream
@@ -289,8 +325,7 @@ export default function MeetingRoom({
           return;
         }
 
-        mediaStreamRef.current =
-          stream;
+        mediaStreamRef.current = stream;
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject =
@@ -321,7 +356,7 @@ export default function MeetingRoom({
         );
 
         setMediaError(
-          "Não foi possível acessar câmera ou microfone."
+          "Não foi possível acessar a câmera ou o microfone. Verifique as permissões do navegador."
         );
 
         setIsMicOn(false);
@@ -338,18 +373,15 @@ export default function MeetingRoom({
 
       socket.on("connect", () => {
         console.log(
-          "Socket:",
+          "Socket conectado:",
           socket.id
         );
 
-        socket.emit(
-          "join-room",
-          {
-            roomId,
-            participantName:
-              myParticipantName,
-          }
-        );
+        socket.emit("join-room", {
+          roomId,
+          participantName:
+            myParticipantName,
+        });
       });
 
       socket.on(
@@ -379,13 +411,11 @@ export default function MeetingRoom({
 
           try {
             const offer =
-              await peerConnection
-                .createOffer();
+              await peerConnection.createOffer();
 
-            await peerConnection
-              .setLocalDescription(
-                offer
-              );
+            await peerConnection.setLocalDescription(
+              offer
+            );
 
             socket.emit(
               "webrtc-offer",
@@ -396,7 +426,7 @@ export default function MeetingRoom({
             );
           } catch (error) {
             console.error(
-              "Erro ao criar oferta:",
+              "Erro ao criar oferta WebRTC:",
               error
             );
           }
@@ -417,9 +447,7 @@ export default function MeetingRoom({
             participantId
           );
 
-          if (
-            joinedParticipantName
-          ) {
+          if (joinedParticipantName) {
             setRemoteParticipantName(
               joinedParticipantName
             );
@@ -455,35 +483,31 @@ export default function MeetingRoom({
             );
 
           try {
-            await peerConnection
-              .setRemoteDescription(
-                offer
-              );
+            await peerConnection.setRemoteDescription(
+              offer
+            );
 
             await flushPendingIceCandidates(
               peerConnection
             );
 
             const answer =
-              await peerConnection
-                .createAnswer();
+              await peerConnection.createAnswer();
 
-            await peerConnection
-              .setLocalDescription(
-                answer
-              );
+            await peerConnection.setLocalDescription(
+              answer
+            );
 
             socket.emit(
               "webrtc-answer",
               {
-                targetId:
-                  senderId,
+                targetId: senderId,
                 answer,
               }
             );
           } catch (error) {
             console.error(
-              "Erro ao responder oferta:",
+              "Erro ao responder oferta WebRTC:",
               error
             );
           }
@@ -515,17 +539,16 @@ export default function MeetingRoom({
           }
 
           try {
-            await peerConnection
-              .setRemoteDescription(
-                answer
-              );
+            await peerConnection.setRemoteDescription(
+              answer
+            );
 
             await flushPendingIceCandidates(
               peerConnection
             );
           } catch (error) {
             console.error(
-              "Erro ao aplicar resposta:",
+              "Erro ao aplicar resposta WebRTC:",
               error
             );
           }
@@ -546,24 +569,22 @@ export default function MeetingRoom({
 
           if (
             !peerConnection ||
-            !peerConnection
-              .remoteDescription
+            !peerConnection.remoteDescription
           ) {
-            pendingIceCandidatesRef
-              .current
-              .push(candidate);
+            pendingIceCandidatesRef.current.push(
+              candidate
+            );
 
             return;
           }
 
           try {
-            await peerConnection
-              .addIceCandidate(
-                candidate
-              );
+            await peerConnection.addIceCandidate(
+              candidate
+            );
           } catch (error) {
             console.error(
-              "Erro no ICE:",
+              "Erro no ICE candidate:",
               error
             );
           }
@@ -577,9 +598,7 @@ export default function MeetingRoom({
         }: {
           count: number;
         }) => {
-          setParticipantCount(
-            count
-          );
+          setParticipantCount(count);
         }
       );
 
@@ -612,9 +631,7 @@ export default function MeetingRoom({
           senderName: string;
         }) => {
           setMessages(
-            (
-              currentMessages
-            ) => [
+            (currentMessages) => [
               ...currentMessages,
               {
                 id,
@@ -642,18 +659,11 @@ export default function MeetingRoom({
           track.stop();
         });
 
-      peerConnectionRef.current
-        ?.close();
+      peerConnectionRef.current?.close();
+      socketRef.current?.disconnect();
 
-      socketRef.current
-        ?.disconnect();
-
-      mediaStreamRef.current =
-        null;
-
-      peerConnectionRef.current =
-        null;
-
+      mediaStreamRef.current = null;
+      peerConnectionRef.current = null;
       socketRef.current = null;
     };
   }, [roomId]);
@@ -663,16 +673,14 @@ export default function MeetingRoom({
       return;
     }
 
-    messagesEndRef.current
-      ?.scrollIntoView({
-        behavior: "smooth",
-      });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+    });
   }, [messages, isChatOpen]);
 
   function toggleMicrophone() {
     const tracks =
-      mediaStreamRef.current
-        ?.getAudioTracks();
+      mediaStreamRef.current?.getAudioTracks();
 
     if (
       !tracks ||
@@ -681,12 +689,10 @@ export default function MeetingRoom({
       return;
     }
 
-    const nextState =
-      !isMicOn;
+    const nextState = !isMicOn;
 
     tracks.forEach((track) => {
-      track.enabled =
-        nextState;
+      track.enabled = nextState;
     });
 
     setIsMicOn(nextState);
@@ -694,8 +700,7 @@ export default function MeetingRoom({
 
   function toggleCamera() {
     const tracks =
-      mediaStreamRef.current
-        ?.getVideoTracks();
+      mediaStreamRef.current?.getVideoTracks();
 
     if (
       !tracks ||
@@ -704,12 +709,10 @@ export default function MeetingRoom({
       return;
     }
 
-    const nextState =
-      !isCameraOn;
+    const nextState = !isCameraOn;
 
     tracks.forEach((track) => {
-      track.enabled =
-        nextState;
+      track.enabled = nextState;
     });
 
     setIsCameraOn(nextState);
@@ -720,41 +723,34 @@ export default function MeetingRoom({
   ) {
     event.preventDefault();
 
-    const text =
-      newMessage.trim();
+    const text = newMessage.trim();
 
-    const socket =
-      socketRef.current;
+    const socket = socketRef.current;
 
     if (!text || !socket) {
       return;
     }
 
     const time =
-      new Date()
-        .toLocaleTimeString(
-          "pt-BR",
-          {
-            hour: "2-digit",
-            minute: "2-digit",
-          }
-        );
+      new Date().toLocaleTimeString(
+        "pt-BR",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+        }
+      );
 
     const messageId =
       `${Date.now()}-${Math.random()}`;
 
-    // Nossa mensagem aparece
-    // imediatamente na nossa tela.
-    const ownMessage: ChatMessage =
-      {
-        id: messageId,
-        text,
-        time,
-        senderName:
-          participantName ||
-          "Você",
-        isOwn: true,
-      };
+    const ownMessage: ChatMessage = {
+      id: messageId,
+      text,
+      time,
+      senderName:
+        participantName || "Você",
+      isOwn: true,
+    };
 
     setMessages(
       (currentMessages) => [
@@ -763,7 +759,6 @@ export default function MeetingRoom({
       ]
     );
 
-    // Envia para o OUTRO navegador.
     socket.emit(
       "send-chat-message",
       {
@@ -780,23 +775,37 @@ export default function MeetingRoom({
   }
 
   async function copyRoomCode() {
-    await navigator.clipboard
-      .writeText(roomId);
+    try {
+      await navigator.clipboard.writeText(
+        roomId
+      );
 
-    alert(
-      "Código da sala copiado!"
-    );
+      alert(
+        "Código da sala copiado!"
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao copiar código:",
+        error
+      );
+    }
   }
 
   async function copyInviteLink() {
-    await navigator.clipboard
-      .writeText(
+    try {
+      await navigator.clipboard.writeText(
         window.location.href
       );
 
-    alert(
-      "Link da reunião copiado!"
-    );
+      alert(
+        "Link da reunião copiado!"
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao copiar convite:",
+        error
+      );
+    }
   }
 
   function leaveMeeting() {
@@ -806,15 +815,10 @@ export default function MeetingRoom({
         track.stop();
       });
 
-    peerConnectionRef.current
-      ?.close();
+    peerConnectionRef.current?.close();
+    socketRef.current?.disconnect();
 
-    socketRef.current
-      ?.disconnect();
-
-    router.push(
-      "/dashboard"
-    );
+    router.push("/dashboard");
   }
 
   return (
@@ -840,8 +844,8 @@ export default function MeetingRoom({
               </p>
 
               <p className="mt-1 text-xs text-zinc-500">
-                {participantCount} de
-                2 participantes
+                {participantCount} de 2
+                participantes
               </p>
             </div>
 
@@ -851,7 +855,7 @@ export default function MeetingRoom({
                 onClick={
                   copyRoomCode
                 }
-                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold hover:bg-zinc-800"
+                className="cursor-pointer rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold transition hover:bg-zinc-800"
               >
                 📋 Copiar código
               </button>
@@ -861,7 +865,7 @@ export default function MeetingRoom({
                 onClick={
                   copyInviteLink
                 }
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold hover:bg-blue-500"
+                className="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold transition hover:bg-blue-500"
               >
                 🔗 Copiar convite
               </button>
@@ -892,9 +896,7 @@ export default function MeetingRoom({
             <section className="grid gap-6 md:grid-cols-2">
               <div className="relative aspect-video overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
                 <video
-                  ref={
-                    localVideoRef
-                  }
+                  ref={localVideoRef}
                   autoPlay
                   playsInline
                   muted
@@ -907,8 +909,7 @@ export default function MeetingRoom({
 
                 {!isCameraOn && (
                   <div className="flex h-full items-center justify-center">
-                    👤 Câmera
-                    desligada
+                    👤 Câmera desligada
                   </div>
                 )}
 
@@ -922,9 +923,7 @@ export default function MeetingRoom({
                 {remoteParticipantId ? (
                   <>
                     <video
-                      ref={
-                        remoteVideoRef
-                      }
+                      ref={remoteVideoRef}
                       autoPlay
                       playsInline
                       className="h-full w-full object-cover"
@@ -949,8 +948,7 @@ export default function MeetingRoom({
                     </div>
 
                     <h2 className="mt-3 font-bold">
-                      Aguardando
-                      participante
+                      Aguardando participante
                     </h2>
 
                     <button
@@ -958,7 +956,7 @@ export default function MeetingRoom({
                       onClick={
                         copyInviteLink
                       }
-                      className="mt-5 rounded-lg border border-blue-600 px-4 py-2 text-blue-400"
+                      className="mt-5 cursor-pointer rounded-lg border border-blue-600 px-4 py-2 text-blue-400"
                     >
                       🔗 Copiar link
                     </button>
@@ -975,10 +973,11 @@ export default function MeetingRoom({
 
             <section className="mt-6 flex flex-wrap justify-center gap-3">
               <button
+                type="button"
                 onClick={
                   toggleMicrophone
                 }
-                className="rounded-lg border border-emerald-600 px-5 py-3"
+                className="cursor-pointer rounded-lg border border-emerald-600 px-5 py-3"
               >
                 {isMicOn
                   ? "🎤 Microfone ligado"
@@ -986,10 +985,9 @@ export default function MeetingRoom({
               </button>
 
               <button
-                onClick={
-                  toggleCamera
-                }
-                className="rounded-lg border border-emerald-600 px-5 py-3"
+                type="button"
+                onClick={toggleCamera}
+                className="cursor-pointer rounded-lg border border-emerald-600 px-5 py-3"
               >
                 {isCameraOn
                   ? "📹 Câmera ligada"
@@ -997,12 +995,13 @@ export default function MeetingRoom({
               </button>
 
               <button
+                type="button"
                 onClick={() =>
                   setIsChatOpen(
                     !isChatOpen
                   )
                 }
-                className="rounded-lg border border-blue-600 px-5 py-3 text-blue-400"
+                className="cursor-pointer rounded-lg border border-blue-600 px-5 py-3 text-blue-400"
               >
                 💬{" "}
                 {isChatOpen
@@ -1011,10 +1010,9 @@ export default function MeetingRoom({
               </button>
 
               <button
-                onClick={
-                  leaveMeeting
-                }
-                className="rounded-lg bg-red-600 px-5 py-3"
+                type="button"
+                onClick={leaveMeeting}
+                className="cursor-pointer rounded-lg bg-red-600 px-5 py-3"
               >
                 📞 Encerrar
               </button>
@@ -1030,19 +1028,15 @@ export default function MeetingRoom({
               </div>
 
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-                {messages.length ===
-                0 ? (
+                {messages.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center text-zinc-500">
-                    Nenhuma
-                    mensagem ainda
+                    Nenhuma mensagem ainda
                   </div>
                 ) : (
                   messages.map(
                     (message) => (
                       <div
-                        key={
-                          message.id
-                        }
+                        key={message.id}
                         className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                           message.isOwn
                             ? "ml-auto bg-blue-600"
@@ -1063,7 +1057,7 @@ export default function MeetingRoom({
                           </span>
                         </div>
 
-                        <p>
+                        <p className="break-words">
                           {
                             message.text
                           }
@@ -1074,38 +1068,34 @@ export default function MeetingRoom({
                 )}
 
                 <div
-                  ref={
-                    messagesEndRef
-                  }
+                  ref={messagesEndRef}
                 />
               </div>
 
               <form
-                onSubmit={
-                  sendMessage
-                }
+                onSubmit={sendMessage}
                 className="border-t border-zinc-800 p-4"
               >
                 <div className="flex gap-2">
                   <input
-                    value={
-                      newMessage
-                    }
-                    onChange={(
-                      event
-                    ) =>
+                    type="text"
+                    value={newMessage}
+                    onChange={(event) =>
                       setNewMessage(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="Digite uma mensagem..."
-                    className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3"
+                    autoComplete="off"
+                    className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 outline-none focus:border-blue-500"
                   />
 
                   <button
                     type="submit"
-                    className="rounded-lg bg-blue-600 px-4 py-3 font-semibold"
+                    disabled={
+                      !newMessage.trim()
+                    }
+                    className="cursor-pointer rounded-lg bg-blue-600 px-4 py-3 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Enviar
                   </button>
