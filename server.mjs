@@ -87,7 +87,7 @@ io.on("connection", (socket) => {
           ? Array.from(currentRoom)
           : [];
 
-      // Nesta fase permitimos 2 pessoas.
+      // Nesta fase, cada sala terá no máximo 2 pessoas.
       if (
         existingParticipantIds.length >= 2
       ) {
@@ -104,7 +104,6 @@ io.on("connection", (socket) => {
       socket.data.mediaStatus =
         normalizeMediaStatus(mediaStatus);
 
-      // Recupera dados de quem já estava na sala.
       const existingParticipants =
         existingParticipantIds.map(
           (participantId) => {
@@ -135,7 +134,8 @@ io.on("connection", (socket) => {
         `👤 ${socket.data.participantName} entrou em ${roomId}`
       );
 
-      // Diz ao novo usuário quem já estava lá.
+      // Informa ao novo participante
+      // quem já estava na sala.
       socket.emit(
         "existing-participants",
         {
@@ -144,7 +144,8 @@ io.on("connection", (socket) => {
         }
       );
 
-      // Avisa o usuário antigo sobre o novo.
+      // Avisa quem já estava na sala
+      // que uma nova pessoa entrou.
       socket
         .to(roomName)
         .emit("participant-joined", {
@@ -210,6 +211,11 @@ io.on("connection", (socket) => {
             participantId:
               socket.id,
 
+            participantName:
+              socket.data
+                .participantName ||
+              "Participante",
+
             mediaStatus:
               nextStatus,
           }
@@ -218,7 +224,7 @@ io.on("connection", (socket) => {
   );
 
   // --------------------------------------------------
-  // WEBRTC
+  // WEBRTC — OFERTA
   // --------------------------------------------------
 
   socket.on(
@@ -244,6 +250,10 @@ io.on("connection", (socket) => {
     }
   );
 
+  // --------------------------------------------------
+  // WEBRTC — RESPOSTA
+  // --------------------------------------------------
+
   socket.on(
     "webrtc-answer",
     ({ targetId, answer }) => {
@@ -266,6 +276,10 @@ io.on("connection", (socket) => {
       );
     }
   );
+
+  // --------------------------------------------------
+  // WEBRTC — ICE
+  // --------------------------------------------------
 
   socket.on(
     "webrtc-ice-candidate",
@@ -324,7 +338,7 @@ io.on("connection", (socket) => {
   );
 
   // --------------------------------------------------
-  // SAÍDA
+  // PARTICIPANTE SAINDO
   // --------------------------------------------------
 
   socket.on(
@@ -336,6 +350,10 @@ io.on("connection", (socket) => {
       if (!roomName) {
         return;
       }
+
+      const participantName =
+        socket.data.participantName ||
+        "Participante";
 
       const currentRoom =
         io.sockets.adapter.rooms.get(
@@ -356,6 +374,8 @@ io.on("connection", (socket) => {
           {
             participantId:
               socket.id,
+
+            participantName,
           }
         );
 
