@@ -71,18 +71,39 @@ const NOTIFICATION_CLASSES: Record<
   NotificationTone,
   string
 > = {
-  info:
-    "border-blue-700 bg-blue-950/95",
-
+  info: "border-blue-700 bg-blue-950/95",
   success:
     "border-emerald-700 bg-emerald-950/95",
-
   warning:
     "border-yellow-700 bg-yellow-950/95",
-
-  danger:
-    "border-red-700 bg-red-950/95",
+  danger: "border-red-700 bg-red-950/95",
 };
+
+// Converte segundos para HH:MM:SS.
+function formatMeetingDuration(
+  totalSeconds: number
+) {
+  const hours = Math.floor(
+    totalSeconds / 3600
+  );
+
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60
+  );
+
+  const seconds =
+    totalSeconds % 60;
+
+  return [
+    hours,
+    minutes,
+    seconds,
+  ]
+    .map((value) =>
+      String(value).padStart(2, "0")
+    )
+    .join(":");
+}
 
 export default function MeetingRoom({
   roomId,
@@ -114,9 +135,7 @@ export default function MeetingRoom({
     );
 
   const pendingIceCandidatesRef =
-    useRef<RTCIceCandidateInit[]>(
-      []
-    );
+    useRef<RTCIceCandidateInit[]>([]);
 
   const messagesEndRef =
     useRef<HTMLDivElement>(null);
@@ -149,6 +168,15 @@ export default function MeetingRoom({
     remoteParticipantName,
     setRemoteParticipantName,
   ] = useState("Participante");
+
+  // --------------------------------------------------
+  // CRONÔMETRO
+  // --------------------------------------------------
+
+  const [
+    meetingSeconds,
+    setMeetingSeconds,
+  ] = useState(0);
 
   // --------------------------------------------------
   // MÍDIA LOCAL
@@ -204,9 +232,7 @@ export default function MeetingRoom({
   const [
     notifications,
     setNotifications,
-  ] = useState<RoomNotification[]>(
-    []
-  );
+  ] = useState<RoomNotification[]>([]);
 
   // --------------------------------------------------
   // CHAT
@@ -220,6 +246,43 @@ export default function MeetingRoom({
 
   const [messages, setMessages] =
     useState<ChatMessage[]>([]);
+
+  // --------------------------------------------------
+  // CRONÔMETRO DA REUNIÃO
+  // --------------------------------------------------
+
+  useEffect(() => {
+    const meetingStartedAt =
+      Date.now();
+
+    function updateTimer() {
+      const elapsedMilliseconds =
+        Date.now() - meetingStartedAt;
+
+      const elapsedSeconds =
+        Math.floor(
+          elapsedMilliseconds / 1000
+        );
+
+      setMeetingSeconds(
+        elapsedSeconds
+      );
+    }
+
+    updateTimer();
+
+    const interval =
+      window.setInterval(
+        updateTimer,
+        1000
+      );
+
+    return () => {
+      window.clearInterval(
+        interval
+      );
+    };
+  }, []);
 
   // --------------------------------------------------
   // IDENTIDADE DO USUÁRIO
@@ -381,7 +444,8 @@ export default function MeetingRoom({
       cameraStream?.getVideoTracks()[0];
 
     const activeVideoStream =
-      screenStream ?? cameraStream;
+      screenStream ??
+      cameraStream;
 
     if (
       activeVideoTrack &&
@@ -661,10 +725,6 @@ export default function MeetingRoom({
     }
 
     async function startMeeting() {
-      // --------------------------------
-      // CÂMERA E MICROFONE
-      // --------------------------------
-
       try {
         setMediaError("");
 
@@ -752,10 +812,6 @@ export default function MeetingRoom({
         return;
       }
 
-      // --------------------------------
-      // SOCKET
-      // --------------------------------
-
       const socket = io();
 
       socketRef.current = socket;
@@ -776,10 +832,6 @@ export default function MeetingRoom({
             localMediaStatusRef.current,
         });
       });
-
-      // --------------------------------
-      // QUEM JÁ ESTAVA NA SALA
-      // --------------------------------
 
       socket.on(
         "existing-participants",
@@ -847,10 +899,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // PARTICIPANTE ENTROU
-      // --------------------------------
-
       socket.on(
         "participant-joined",
         ({
@@ -881,10 +929,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // STATUS REMOTO
-      // --------------------------------
-
       socket.on(
         "participant-media-status",
         ({
@@ -903,7 +947,6 @@ export default function MeetingRoom({
             changedParticipantName ||
             "Participante";
 
-          // MICROFONE
           if (
             previousStatus.isMicOn &&
             !mediaStatus.isMicOn
@@ -924,7 +967,6 @@ export default function MeetingRoom({
             );
           }
 
-          // CÂMERA
           if (
             previousStatus.isCameraOn &&
             !mediaStatus.isCameraOn
@@ -945,7 +987,6 @@ export default function MeetingRoom({
             );
           }
 
-          // COMPARTILHAMENTO
           if (
             !previousStatus
               .isScreenSharing &&
@@ -976,10 +1017,6 @@ export default function MeetingRoom({
           );
         }
       );
-
-      // --------------------------------
-      // OFERTA WEBRTC
-      // --------------------------------
 
       socket.on(
         "webrtc-offer",
@@ -1045,10 +1082,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // RESPOSTA WEBRTC
-      // --------------------------------
-
       socket.on(
         "webrtc-answer",
         async ({
@@ -1092,10 +1125,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // ICE
-      // --------------------------------
-
       socket.on(
         "webrtc-ice-candidate",
         async ({
@@ -1136,10 +1165,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // CONTADOR
-      // --------------------------------
-
       socket.on(
         "room-participants",
         ({
@@ -1152,10 +1177,6 @@ export default function MeetingRoom({
           );
         }
       );
-
-      // --------------------------------
-      // PARTICIPANTE SAIU
-      // --------------------------------
 
       socket.on(
         "participant-left",
@@ -1175,10 +1196,6 @@ export default function MeetingRoom({
         }
       );
 
-      // --------------------------------
-      // SALA CHEIA
-      // --------------------------------
-
       socket.on(
         "room-full",
         () => {
@@ -1190,10 +1207,6 @@ export default function MeetingRoom({
           );
         }
       );
-
-      // --------------------------------
-      // CHAT
-      // --------------------------------
 
       socket.on(
         "chat-message",
@@ -1525,6 +1538,16 @@ export default function MeetingRoom({
                 {participantCount} de 2
                 participantes
               </p>
+
+              {/* CRONÔMETRO */}
+              <p className="mt-2 text-sm text-zinc-300">
+                ⏱️ Duração:{" "}
+                <span className="font-mono font-semibold text-emerald-400">
+                  {formatMeetingDuration(
+                    meetingSeconds
+                  )}
+                </span>
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -1833,9 +1856,7 @@ export default function MeetingRoom({
                         </div>
 
                         <p className="break-words">
-                          {
-                            message.text
-                          }
+                          {message.text}
                         </p>
                       </div>
                     )
@@ -1855,12 +1876,9 @@ export default function MeetingRoom({
                   <input
                     type="text"
                     value={newMessage}
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setNewMessage(
-                        event.target
-                          .value
+                        event.target.value
                       )
                     }
                     placeholder="Digite uma mensagem..."
