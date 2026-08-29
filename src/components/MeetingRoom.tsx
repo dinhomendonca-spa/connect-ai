@@ -38,6 +38,7 @@ type RoomParticipant = {
   participantName: string;
   mediaStatus: MediaStatus;
   isTranscribing: boolean;
+  isHost?: boolean;
 };
 
 type NotificationTone =
@@ -84,11 +85,57 @@ type AssemblyTokenResponse = {
   error?: string;
 };
 
+type MeetingReportActionItem = {
+  task: string;
+  owner: string;
+  deadline: string;
+};
+
+type MeetingReportClarification = {
+  topic: string;
+  explanation: string;
+};
+
+type MeetingReport = {
+  id: string;
+  roomId: string;
+  generatedAt: number;
+  startedAt: number;
+  durationSeconds: number;
+  participants: string[];
+  transcriptEntryCount: number;
+  title: string;
+  executiveSummary: string;
+  topics: string[];
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: MeetingReportActionItem[];
+  conversationAnalysis: {
+    overview: string;
+    alignment: string;
+    divergences: string;
+    communicationClarity: string;
+    risksAndAttentionPoints: string[];
+  };
+  clarifications: MeetingReportClarification[];
+  unresolvedPoints: string[];
+};
+
+type MeetingReportResponse = {
+  ok: boolean;
+  report?: MeetingReport;
+  cached?: boolean;
+  error?: string;
+};
+
 const CURRENT_USER_SESSION_KEY =
   "connectai-current-user";
 
 const FALLBACK_PARTICIPANT_KEY =
   "connectai-participant-name";
+
+const PARTICIPANT_SESSION_KEY =
+  "connectai-participant-session";
 
 const DEFAULT_MEDIA_STATUS: MediaStatus = {
   isMicOn: true,
@@ -140,6 +187,782 @@ function formatMeetingDuration(
       .padStart(2, "0");
 
   return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+}
+
+function getOrCreateParticipantSessionId(
+  roomId: string
+): string {
+  const storageKey =
+    `${PARTICIPANT_SESSION_KEY}:${roomId}`;
+
+  try {
+    const stored =
+      sessionStorage.getItem(storageKey);
+
+    if (stored) {
+      return stored;
+    }
+
+    const generated =
+      typeof crypto !== "undefined" &&
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`;
+
+    sessionStorage.setItem(
+      storageKey,
+      generated
+    );
+
+    return generated;
+  } catch {
+    return `${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+  }
+}
+
+function formatReportDate(
+  timestamp: number
+): string {
+  return new Date(timestamp).toLocaleString(
+    "pt-BR",
+    {
+      dateStyle: "short",
+      timeStyle: "short",
+    }
+  );
+}
+
+function formatMeetingReportText(
+  report: MeetingReport
+): string {
+  const lines: string[] = [
+    report.title ||
+      "Relatório da reunião",
+    "",
+    `Sala: ${report.roomId}`,
+    `Início: ${formatReportDate(report.startedAt)}`,
+    `Gerado em: ${formatReportDate(report.generatedAt)}`,
+    `Duração: ${formatMeetingDuration(report.durationSeconds)}`,
+    `Participantes: ${
+      report.participants.length > 0
+        ? report.participants.join(", ")
+        : "Não definido durante a reunião."
+    }`,
+    "",
+    "RESUMO EXECUTIVO",
+    report.executiveSummary,
+    "",
+    "TÓPICOS ABORDADOS",
+    ...report.topics.map(
+      (item) => `• ${item}`
+    ),
+    "",
+    "PRINCIPAIS PONTOS",
+    ...report.keyPoints.map(
+      (item) => `• ${item}`
+    ),
+    "",
+    "DECISÕES TOMADAS",
+    ...report.decisions.map(
+      (item) => `• ${item}`
+    ),
+    "",
+    "PENDÊNCIAS E PRÓXIMOS PASSOS",
+    ...report.actionItems.map(
+      (item) =>
+        `• ${item.task} | Responsável: ${item.owner} | Prazo: ${item.deadline}`
+    ),
+    "",
+    "ANÁLISE DA CONVERSA",
+    `Visão geral: ${report.conversationAnalysis.overview}`,
+    `Alinhamento: ${report.conversationAnalysis.alignment}`,
+    `Divergências: ${report.conversationAnalysis.divergences}`,
+    `Clareza da comunicação: ${report.conversationAnalysis.communicationClarity}`,
+    ...report.conversationAnalysis.risksAndAttentionPoints.map(
+      (item) => `• Ponto de atenção: ${item}`
+    ),
+    "",
+    "ESCLARECIMENTOS",
+    ...report.clarifications.map(
+      (item) =>
+        `• ${item.topic}: ${item.explanation}`
+    ),
+    "",
+    "PONTOS NÃO DEFINIDOS",
+    ...report.unresolvedPoints.map(
+      (item) => `• ${item}`
+    ),
+  ];
+
+  return lines.join("\n");
+}
+
+
+type PdfTextStyle =
+  | "title"
+  | "subtitle"
+  | "meta"
+  | "section"
+  | "body"
+  | "bullet"
+  | "small";
+
+type PdfLayoutLine = {
+  text: string;
+  style: PdfTextStyle;
+};
+
+const PDF_STYLE_CONFIG: Record<
+  PdfTextStyle,
+  {
+    font: "F1" | "F2";
+    fontSize: number;
+    lineHeight: number;
+    maxCharacters: number;
+    gapBefore: number;
+  }
+> = {
+  title: {
+    font: "F2",
+    fontSize: 18,
+    lineHeight: 24,
+    maxCharacters: 52,
+    gapBefore: 0,
+  },
+  subtitle: {
+    font: "F1",
+    fontSize: 9,
+    lineHeight: 14,
+    maxCharacters: 96,
+    gapBefore: 1,
+  },
+  meta: {
+    font: "F1",
+    fontSize: 9,
+    lineHeight: 13,
+    maxCharacters: 96,
+    gapBefore: 0,
+  },
+  section: {
+    font: "F2",
+    fontSize: 12,
+    lineHeight: 18,
+    maxCharacters: 76,
+    gapBefore: 10,
+  },
+  body: {
+    font: "F1",
+    fontSize: 10,
+    lineHeight: 15,
+    maxCharacters: 92,
+    gapBefore: 0,
+  },
+  bullet: {
+    font: "F1",
+    fontSize: 10,
+    lineHeight: 15,
+    maxCharacters: 88,
+    gapBefore: 0,
+  },
+  small: {
+    font: "F1",
+    fontSize: 9,
+    lineHeight: 13,
+    maxCharacters: 100,
+    gapBefore: 0,
+  },
+};
+
+function normalizePdfText(
+  value: string
+): string {
+  return String(value ?? "")
+    .normalize("NFC")
+    .replace(/[–—]/g, "-")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/…/g, "...")
+    .replace(/\u00a0/g, " ")
+    .replace(/[^\x00-\xFF]/g, "?");
+}
+
+function escapePdfLiteral(
+  value: string
+): string {
+  return normalizePdfText(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
+function wrapPdfText(
+  value: string,
+  maxCharacters: number
+): string[] {
+  const paragraphs =
+    normalizePdfText(value).split(/\r?\n/);
+
+  const result: string[] = [];
+
+  paragraphs.forEach(
+    (paragraph) => {
+      const trimmed =
+        paragraph.trim();
+
+      if (!trimmed) {
+        result.push("");
+        return;
+      }
+
+      const words =
+        trimmed.split(/\s+/);
+
+      let currentLine = "";
+
+      words.forEach((word) => {
+        if (
+          word.length >
+          maxCharacters
+        ) {
+          if (currentLine) {
+            result.push(
+              currentLine
+            );
+            currentLine = "";
+          }
+
+          for (
+            let index = 0;
+            index < word.length;
+            index += maxCharacters
+          ) {
+            result.push(
+              word.slice(
+                index,
+                index +
+                  maxCharacters
+              )
+            );
+          }
+
+          return;
+        }
+
+        const candidate =
+          currentLine
+            ? `${currentLine} ${word}`
+            : word;
+
+        if (
+          candidate.length <=
+          maxCharacters
+        ) {
+          currentLine =
+            candidate;
+          return;
+        }
+
+        result.push(
+          currentLine
+        );
+
+        currentLine = word;
+      });
+
+      if (currentLine) {
+        result.push(
+          currentLine
+        );
+      }
+    }
+  );
+
+  return result;
+}
+
+function buildMeetingReportPdfLines(
+  report: MeetingReport
+): PdfLayoutLine[] {
+  const lines: PdfLayoutLine[] = [];
+
+  const addLine = (
+    style: PdfTextStyle,
+    text: string
+  ) => {
+    lines.push({
+      style,
+      text,
+    });
+  };
+
+  const addSection = (
+    title: string,
+    content: string
+  ) => {
+    addLine(
+      "section",
+      title
+    );
+
+    addLine(
+      "body",
+      content ||
+        "Não definido durante a reunião."
+    );
+  };
+
+  const addList = (
+    title: string,
+    items: string[]
+  ) => {
+    addLine(
+      "section",
+      title
+    );
+
+    if (items.length === 0) {
+      addLine(
+        "body",
+        "Não definido durante a reunião."
+      );
+      return;
+    }
+
+    items.forEach((item) => {
+      addLine(
+        "bullet",
+        `- ${item}`
+      );
+    });
+  };
+
+  addLine(
+    "title",
+    report.title ||
+      "Relatório da reunião"
+  );
+
+  addLine(
+    "subtitle",
+    "ConnectAI - Relatório inteligente de reunião"
+  );
+
+  addLine(
+    "meta",
+    `Sala: ${report.roomId}`
+  );
+
+  addLine(
+    "meta",
+    `Início: ${formatReportDate(
+      report.startedAt
+    )}`
+  );
+
+  addLine(
+    "meta",
+    `Gerado em: ${formatReportDate(
+      report.generatedAt
+    )}`
+  );
+
+  addLine(
+    "meta",
+    `Duração: ${formatMeetingDuration(
+      report.durationSeconds
+    )}`
+  );
+
+  addLine(
+    "meta",
+    `Participantes: ${
+      report.participants.length > 0
+        ? report.participants.join(
+            ", "
+          )
+        : "Não definido durante a reunião."
+    }`
+  );
+
+  addLine(
+    "meta",
+    `Falas transcritas: ${report.transcriptEntryCount}`
+  );
+
+  addSection(
+    "Resumo executivo",
+    report.executiveSummary
+  );
+
+  addList(
+    "Tópicos abordados",
+    report.topics
+  );
+
+  addList(
+    "Principais pontos",
+    report.keyPoints
+  );
+
+  addList(
+    "Decisões tomadas",
+    report.decisions
+  );
+
+  addLine(
+    "section",
+    "Pendências e próximos passos"
+  );
+
+  if (
+    report.actionItems.length ===
+    0
+  ) {
+    addLine(
+      "body",
+      "Não definido durante a reunião."
+    );
+  } else {
+    report.actionItems.forEach(
+      (item) => {
+        addLine(
+          "bullet",
+          `- ${item.task}`
+        );
+
+        addLine(
+          "small",
+          `  Responsável: ${item.owner} | Prazo: ${item.deadline}`
+        );
+      }
+    );
+  }
+
+  addLine(
+    "section",
+    "Análise da conversa"
+  );
+
+  addLine(
+    "body",
+    `Visão geral: ${report.conversationAnalysis.overview}`
+  );
+
+  addLine(
+    "body",
+    `Alinhamento: ${report.conversationAnalysis.alignment}`
+  );
+
+  addLine(
+    "body",
+    `Divergências: ${report.conversationAnalysis.divergences}`
+  );
+
+  addLine(
+    "body",
+    `Clareza da comunicação: ${report.conversationAnalysis.communicationClarity}`
+  );
+
+  if (
+    report.conversationAnalysis.risksAndAttentionPoints.length ===
+    0
+  ) {
+    addLine(
+      "body",
+      "Pontos de atenção: Não definido durante a reunião."
+    );
+  } else {
+    addLine(
+      "body",
+      "Pontos de atenção:"
+    );
+
+    report.conversationAnalysis.risksAndAttentionPoints.forEach(
+      (item) => {
+        addLine(
+          "bullet",
+          `- ${item}`
+        );
+      }
+    );
+  }
+
+  addLine(
+    "section",
+    "Esclarecimentos"
+  );
+
+  if (
+    report.clarifications.length ===
+    0
+  ) {
+    addLine(
+      "body",
+      "Não definido durante a reunião."
+    );
+  } else {
+    report.clarifications.forEach(
+      (item) => {
+        addLine(
+          "bullet",
+          `- ${item.topic}: ${item.explanation}`
+        );
+      }
+    );
+  }
+
+  addList(
+    "Pontos não definidos",
+    report.unresolvedPoints
+  );
+
+  return lines;
+}
+
+function createMeetingReportPdfBlob(
+  report: MeetingReport
+): Blob {
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const leftMargin = 48;
+  const topY = 790;
+  const bottomY = 58;
+
+  const pages: string[][] = [
+    [],
+  ];
+
+  let currentPage = 0;
+  let currentY = topY;
+
+  const addPage = () => {
+    pages.push([]);
+    currentPage += 1;
+    currentY = topY;
+  };
+
+  const sourceLines =
+    buildMeetingReportPdfLines(
+      report
+    );
+
+  sourceLines.forEach(
+    (sourceLine) => {
+      const config =
+        PDF_STYLE_CONFIG[
+          sourceLine.style
+        ];
+
+      const wrappedLines =
+        wrapPdfText(
+          sourceLine.text,
+          config.maxCharacters
+        );
+
+      const gapBefore =
+        config.gapBefore;
+
+      if (
+        gapBefore > 0 &&
+        currentY < topY
+      ) {
+        currentY -=
+          gapBefore;
+      }
+
+      wrappedLines.forEach(
+        (line) => {
+          if (
+            currentY -
+              config.lineHeight <
+            bottomY
+          ) {
+            addPage();
+          }
+
+          if (!line) {
+            currentY -=
+              config.lineHeight;
+            return;
+          }
+
+          const escapedText =
+            escapePdfLiteral(
+              line
+            );
+
+          pages[currentPage].push(
+            `BT /${config.font} ${config.fontSize} Tf ${leftMargin} ${currentY.toFixed(
+              2
+            )} Td (${escapedText}) Tj ET\n`
+          );
+
+          currentY -=
+            config.lineHeight;
+        }
+      );
+    }
+  );
+
+  const totalPages =
+    pages.length;
+
+  const objects: string[] = [
+    "",
+  ];
+
+  objects[1] =
+    "<< /Type /Catalog /Pages 2 0 R >>";
+
+  const pageObjectNumbers =
+    pages.map(
+      (_, index) =>
+        5 + index * 2
+    );
+
+  objects[2] =
+    `<< /Type /Pages /Kids [${pageObjectNumbers
+      .map(
+        (objectNumber) =>
+          `${objectNumber} 0 R`
+      )
+      .join(
+        " "
+      )}] /Count ${totalPages} >>`;
+
+  objects[3] =
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+
+  objects[4] =
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+
+  pages.forEach(
+    (pageCommands, index) => {
+      const pageObjectNumber =
+        5 + index * 2;
+
+      const contentObjectNumber =
+        pageObjectNumber + 1;
+
+      const footerText =
+        escapePdfLiteral(
+          `ConnectAI - Página ${
+            index + 1
+          } de ${totalPages}`
+        );
+
+      const pageContent =
+        `${pageCommands.join(
+          ""
+        )}BT /F1 8 Tf ${leftMargin} 28 Td (${footerText}) Tj ET\n`;
+
+      objects[pageObjectNumber] =
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectNumber} 0 R >>`;
+
+      objects[contentObjectNumber] =
+        `<< /Length ${pageContent.length} >>\nstream\n${pageContent}endstream`;
+    }
+  );
+
+  let pdf =
+    `%PDF-1.4\n%${String.fromCharCode(
+      0xe2,
+      0xe3,
+      0xcf,
+      0xd3
+    )}\n`;
+
+  const offsets =
+    new Array(
+      objects.length
+    ).fill(0);
+
+  for (
+    let objectNumber = 1;
+    objectNumber <
+    objects.length;
+    objectNumber += 1
+  ) {
+    offsets[objectNumber] =
+      pdf.length;
+
+    pdf += `${objectNumber} 0 obj\n${objects[objectNumber]}\nendobj\n`;
+  }
+
+  const xrefOffset =
+    pdf.length;
+
+  pdf += `xref\n0 ${objects.length}\n`;
+  pdf +=
+    "0000000000 65535 f \n";
+
+  for (
+    let objectNumber = 1;
+    objectNumber <
+    objects.length;
+    objectNumber += 1
+  ) {
+    pdf += `${String(
+      offsets[objectNumber]
+    ).padStart(
+      10,
+      "0"
+    )} 00000 n \n`;
+  }
+
+  pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  const bytes =
+    new Uint8Array(
+      pdf.length
+    );
+
+  for (
+    let index = 0;
+    index < pdf.length;
+    index += 1
+  ) {
+    bytes[index] =
+      pdf.charCodeAt(index) &
+      0xff;
+  }
+
+  return new Blob(
+    [bytes],
+    {
+      type: "application/pdf",
+    }
+  );
+}
+
+function getMeetingReportPdfFileName(
+  report: MeetingReport
+): string {
+  const safeRoomId =
+    report.roomId
+      .replace(
+        /[^a-zA-Z0-9_-]/g,
+        "-"
+      )
+      .replace(
+        /-+/g,
+        "-"
+      )
+      .slice(0, 40) ||
+    "reuniao";
+
+  const date =
+    new Date(
+      report.generatedAt
+    )
+      .toISOString()
+      .slice(0, 10);
+
+  return `connectai-relatorio-${safeRoomId}-${date}.pdf`;
 }
 
 export default function MeetingRoom({
@@ -231,6 +1054,11 @@ export default function MeetingRoom({
     useRef(false);
 
   const assemblyCloseTimerRef =
+    useRef<number | null>(
+      null
+    );
+
+  const reportRequestTimerRef =
     useRef<number | null>(
       null
     );
@@ -384,6 +1212,28 @@ export default function MeetingRoom({
     setIsAssemblyConnecting,
   ] = useState(false);
 
+  const [
+    isHost,
+    setIsHost,
+  ] = useState(false);
+
+  const [
+    meetingReport,
+    setMeetingReport,
+  ] = useState<MeetingReport | null>(
+    null
+  );
+
+  const [
+    isGeneratingReport,
+    setIsGeneratingReport,
+  ] = useState(false);
+
+  const [
+    isReportOpen,
+    setIsReportOpen,
+  ] = useState(false);
+
   const addNotification =
     useCallback(
       (
@@ -463,6 +1313,14 @@ export default function MeetingRoom({
       }
 
       if (
+        isReportOpen
+      ) {
+        setIsReportOpen(
+          false
+        );
+      }
+
+      if (
         isTranscriptOpen
       ) {
         setIsTranscriptOpen(
@@ -491,6 +1349,7 @@ export default function MeetingRoom({
       );
     };
   }, [
+    isReportOpen,
     isTranscriptOpen,
     isChatOpen,
   ]);
@@ -583,7 +1442,9 @@ export default function MeetingRoom({
               container.scrollHeight,
 
             behavior:
-              "smooth",
+              interimTranscript
+                ? "auto"
+                : "smooth",
           });
         }
       );
@@ -1220,13 +2081,10 @@ export default function MeetingRoom({
             "16000",
 
           speech_model:
-            "u3-rt-pro",
+            "universal-3-5-pro",
 
           mode:
-            "balanced",
-
-          format_turns:
-            "true",
+            "min_latency",
 
           token,
         });
@@ -1256,6 +2114,9 @@ export default function MeetingRoom({
               new AudioContext({
                 sampleRate:
                   16000,
+
+                latencyHint:
+                  "interactive",
               });
 
             assemblyAudioContextRef.current =
@@ -1697,6 +2558,11 @@ export default function MeetingRoom({
     const myParticipantName =
       getParticipantName();
 
+    const participantSessionId =
+      getOrCreateParticipantSessionId(
+        roomId
+      );
+
     participantNameRef.current =
       myParticipantName;
 
@@ -1856,6 +2722,8 @@ export default function MeetingRoom({
               participantName:
                 myParticipantName,
 
+              participantSessionId,
+
               mediaStatus:
                 localMediaStatusRef.current,
             }
@@ -1868,18 +2736,28 @@ export default function MeetingRoom({
         ({
           participantName:
             confirmedName,
+
+          isHost:
+            confirmedIsHost,
         }: {
           participantId:
             string;
 
           participantName:
             string;
+
+          isHost?:
+            boolean;
         }) => {
           participantNameRef.current =
             confirmedName;
 
           setParticipantName(
             confirmedName
+          );
+
+          setIsHost(
+            confirmedIsHost === true
           );
         }
       );
@@ -1915,6 +2793,10 @@ export default function MeetingRoom({
 
             setParticipantName(
               ownParticipant.participantName
+            );
+
+            setIsHost(
+              ownParticipant.isHost === true
             );
           }
 
@@ -1978,6 +2860,27 @@ export default function MeetingRoom({
                     participantNameRef.current,
               })
             )
+          );
+        }
+      );
+
+      socket.on(
+        "meeting-report-ready",
+        ({
+          report,
+        }: {
+          report:
+            MeetingReport;
+
+          cached?:
+            boolean;
+        }) => {
+          if (!report) {
+            return;
+          }
+
+          setMeetingReport(
+            report
           );
         }
       );
@@ -2522,6 +3425,18 @@ export default function MeetingRoom({
 
       forceCloseAssemblySocket();
 
+      if (
+        reportRequestTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          reportRequestTimerRef.current
+        );
+
+        reportRequestTimerRef.current =
+          null;
+      }
+
       notificationTimeoutsRef.current.forEach(
         (timeout) => {
           clearTimeout(
@@ -2752,6 +3667,255 @@ export default function MeetingRoom({
     }
   }
 
+  function generateMeetingReport() {
+    const socket =
+      socketRef.current;
+
+    if (!isHost) {
+      addNotification(
+        "Apenas o anfitrião pode gerar o relatório.",
+        "warning"
+      );
+      return;
+    }
+
+    if (
+      transcriptEntries.length ===
+      0
+    ) {
+      addNotification(
+        "Ainda não há falas transcritas para gerar o relatório.",
+        "warning"
+      );
+      return;
+    }
+
+    const reportIsCurrent =
+      meetingReport &&
+      meetingReport.transcriptEntryCount >=
+        transcriptEntries.length;
+
+    if (reportIsCurrent) {
+      setIsReportOpen(
+        true
+      );
+      return;
+    }
+
+    if (!socket) {
+      addNotification(
+        "A conexão da reunião não está disponível.",
+        "warning"
+      );
+      return;
+    }
+
+    if (
+      reportRequestTimerRef.current !==
+      null
+    ) {
+      window.clearTimeout(
+        reportRequestTimerRef.current
+      );
+    }
+
+    setIsGeneratingReport(
+      true
+    );
+
+    setIsReportOpen(
+      true
+    );
+
+    setIsChatOpen(
+      false
+    );
+
+    setIsTranscriptOpen(
+      false
+    );
+
+    let requestFinished =
+      false;
+
+    reportRequestTimerRef.current =
+      window.setTimeout(
+        () => {
+          if (requestFinished) {
+            return;
+          }
+
+          requestFinished =
+            true;
+
+          reportRequestTimerRef.current =
+            null;
+
+          setIsGeneratingReport(
+            false
+          );
+
+          addNotification(
+            "A geração do relatório demorou demais. Tente novamente.",
+            "warning"
+          );
+        },
+        95000
+      );
+
+    socket.emit(
+      "generate-meeting-report",
+      {
+        roomId,
+      },
+      (
+        response:
+          MeetingReportResponse
+      ) => {
+        if (requestFinished) {
+          return;
+        }
+
+        requestFinished =
+          true;
+
+        if (
+          reportRequestTimerRef.current !==
+          null
+        ) {
+          window.clearTimeout(
+            reportRequestTimerRef.current
+          );
+
+          reportRequestTimerRef.current =
+            null;
+        }
+
+        setIsGeneratingReport(
+          false
+        );
+
+        if (
+          !response?.ok ||
+          !response.report
+        ) {
+          setIsReportOpen(
+            false
+          );
+
+          addNotification(
+            response?.error ||
+              "Não foi possível gerar o relatório.",
+            "warning"
+          );
+
+          return;
+        }
+
+        setMeetingReport(
+          response.report
+        );
+
+        setIsReportOpen(
+          true
+        );
+
+        addNotification(
+          response.cached
+            ? "Relatório carregado."
+            : "Relatório da reunião gerado com sucesso.",
+          "success"
+        );
+      }
+    );
+  }
+
+  async function copyMeetingReport() {
+    if (!meetingReport) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(
+        formatMeetingReportText(
+          meetingReport
+        )
+      );
+
+      addNotification(
+        "Relatório copiado.",
+        "success"
+      );
+    } catch {
+      addNotification(
+        "Não foi possível copiar o relatório.",
+        "warning"
+      );
+    }
+  }
+
+
+
+  function downloadMeetingReportPdf() {
+    if (!meetingReport) {
+      return;
+    }
+
+    try {
+      const pdfBlob =
+        createMeetingReportPdfBlob(
+          meetingReport
+        );
+
+      const objectUrl =
+        URL.createObjectURL(
+          pdfBlob
+        );
+
+      const link =
+        document.createElement(
+          "a"
+        );
+
+      link.href = objectUrl;
+      link.download =
+        getMeetingReportPdfFileName(
+          meetingReport
+        );
+
+      document.body.appendChild(
+        link
+      );
+
+      link.click();
+      link.remove();
+
+      window.setTimeout(
+        () => {
+          URL.revokeObjectURL(
+            objectUrl
+          );
+        },
+        1500
+      );
+
+      addNotification(
+        "PDF do relatório baixado.",
+        "success"
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao gerar PDF do relatório:",
+        error
+      );
+
+      addNotification(
+        "Não foi possível gerar o PDF do relatório.",
+        "warning"
+      );
+    }
+  }
+
   function leaveMeeting() {
     stopTranscription(
       true
@@ -2856,6 +4020,12 @@ export default function MeetingRoom({
                       "..."}
                   </strong>
                 </span>
+
+                {isHost && (
+                  <span className="rounded-full border border-amber-400/15 bg-amber-500/10 px-3 py-1.5 text-amber-200">
+                    👑 Anfitrião
+                  </span>
+                )}
 
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                   👥{" "}
@@ -3309,6 +4479,41 @@ export default function MeetingRoom({
                 </button>
               )}
 
+              {isHost && (
+                <button
+                  type="button"
+                  disabled={
+                    isGeneratingReport ||
+                    transcriptEntries.length ===
+                      0
+                  }
+                  onClick={
+                    generateMeetingReport
+                  }
+                  className={`${controlButton} border-amber-400/20 bg-amber-500/15 text-amber-100 disabled:cursor-not-allowed disabled:opacity-40`}
+                >
+                  {isGeneratingReport
+                    ? "✨"
+                    : meetingReport &&
+                        meetingReport.transcriptEntryCount >=
+                          transcriptEntries.length
+                      ? "📊"
+                      : "✨"}
+
+                  <span className="hidden sm:inline">
+                    {isGeneratingReport
+                      ? "Gerando relatório..."
+                      : meetingReport &&
+                          meetingReport.transcriptEntryCount >=
+                            transcriptEntries.length
+                        ? "Abrir relatório"
+                        : meetingReport
+                          ? "Atualizar relatório"
+                          : "Gerar relatório"}
+                  </span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={
@@ -3597,6 +4802,395 @@ export default function MeetingRoom({
           )}
         </div>
       </div>
+
+      {isReportOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-2 backdrop-blur-md sm:p-4">
+          <section
+            className={`flex max-h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-[1.6rem] sm:max-h-[calc(100dvh-2rem)] ${glassPanel}`}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#0b0d14]/95 p-3 sm:p-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="truncate text-base font-bold sm:text-lg">
+                    ✨ Relatório da reunião
+                  </h2>
+
+                  <span className="rounded-full border border-amber-400/15 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200 sm:text-xs">
+                    👑 Anfitrião
+                  </span>
+                </div>
+
+                <p className="mt-1 text-xs text-zinc-500">
+                  Resumo e análise gerados a partir da transcrição da reunião.
+                </p>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                {meetingReport &&
+                  !isGeneratingReport && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={
+                          downloadMeetingReportPdf
+                        }
+                        className="hidden min-h-11 rounded-xl border border-emerald-400/20 bg-emerald-500/15 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-500/25 sm:block"
+                      >
+                        ⬇️ PDF
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void copyMeetingReport()
+                        }
+                        className="hidden min-h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-semibold transition hover:bg-white/10 sm:block"
+                      >
+                        📋 Copiar
+                      </button>
+                    </>
+                  )}
+
+                <button
+                  type="button"
+                  aria-label="Fechar relatório"
+                  onClick={() =>
+                    setIsReportOpen(
+                      false
+                    )
+                  }
+                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg transition hover:bg-white/20 active:scale-95"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {isGeneratingReport ? (
+              <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10 text-center">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-amber-300" />
+
+                <h3 className="mt-5 font-semibold text-amber-100">
+                  Analisando a reunião...
+                </h3>
+
+                <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-500">
+                  A IA está organizando o resumo, tópicos, decisões, próximos passos, análise da conversa e esclarecimentos.
+                </p>
+              </div>
+            ) : meetingReport ? (
+              <>
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
+                  <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                    <div className="rounded-2xl border border-amber-400/15 bg-amber-500/[0.07] p-4 sm:p-5">
+                      <h3 className="text-lg font-bold text-amber-100 sm:text-xl">
+                        {meetingReport.title ||
+                          "Relatório da reunião"}
+                      </h3>
+
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
+                        <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                          📅 {formatReportDate(
+                            meetingReport.startedAt
+                          )}
+                        </span>
+
+                        <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                          ⏱ {formatMeetingDuration(
+                            meetingReport.durationSeconds
+                          )}
+                        </span>
+
+                        <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                          👥 {
+                            meetingReport.participants.length
+                          } participante(s)
+                        </span>
+
+                        <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5">
+                          📝 {
+                            meetingReport.transcriptEntryCount
+                          } falas
+                        </span>
+                      </div>
+
+                      {meetingReport.participants.length >
+                        0 && (
+                        <p className="mt-3 text-xs text-zinc-500">
+                          Participantes: {
+                            meetingReport.participants.join(
+                              ", "
+                            )
+                          }
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded-2xl border border-blue-400/15 bg-blue-500/[0.06] p-4 sm:p-5">
+                      <h3 className="font-semibold text-blue-200">
+                        📌 Resumo executivo
+                      </h3>
+
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-200">
+                        {meetingReport.executiveSummary}
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
+                        <h3 className="font-semibold text-cyan-200">
+                          🧩 Tópicos abordados
+                        </h3>
+
+                        <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-300">
+                          {meetingReport.topics.map(
+                            (item, index) => (
+                              <li
+                                key={`topic-${index}`}
+                                className="flex gap-2"
+                              >
+                                <span className="text-cyan-400">
+                                  •
+                                </span>
+                                <span>{item}</span>
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
+                        <h3 className="font-semibold text-violet-200">
+                          🔎 Principais pontos
+                        </h3>
+
+                        <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-300">
+                          {meetingReport.keyPoints.map(
+                            (item, index) => (
+                              <li
+                                key={`key-${index}`}
+                                className="flex gap-2"
+                              >
+                                <span className="text-violet-400">
+                                  •
+                                </span>
+                                <span>{item}</span>
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-emerald-400/15 bg-emerald-500/[0.05] p-4 sm:p-5">
+                      <h3 className="font-semibold text-emerald-200">
+                        ✅ Decisões tomadas
+                      </h3>
+
+                      <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-300">
+                        {meetingReport.decisions.map(
+                          (item, index) => (
+                            <li
+                              key={`decision-${index}`}
+                              className="flex gap-2"
+                            >
+                              <span className="text-emerald-400">
+                                •
+                              </span>
+                              <span>{item}</span>
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+
+                    <div className="rounded-2xl border border-purple-400/15 bg-purple-500/[0.05] p-4 sm:p-5">
+                      <h3 className="font-semibold text-purple-200">
+                        🚀 Pendências e próximos passos
+                      </h3>
+
+                      <div className="mt-3 space-y-3">
+                        {meetingReport.actionItems.map(
+                          (item, index) => (
+                            <div
+                              key={`action-${index}`}
+                              className="rounded-xl border border-white/10 bg-black/20 p-3"
+                            >
+                              <p className="text-sm leading-relaxed text-zinc-200">
+                                {item.task}
+                              </p>
+
+                              <div className="mt-2 flex flex-wrap gap-2 text-xs text-zinc-500">
+                                <span className="rounded-lg bg-white/5 px-2 py-1">
+                                  👤 {item.owner}
+                                </span>
+
+                                <span className="rounded-lg bg-white/5 px-2 py-1">
+                                  📅 {item.deadline}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-orange-400/15 bg-orange-500/[0.05] p-4 sm:p-5">
+                      <h3 className="font-semibold text-orange-200">
+                        🧠 Análise da conversa
+                      </h3>
+
+                      <div className="mt-4 space-y-4 text-sm leading-7 text-zinc-300">
+                        <div>
+                          <strong className="text-zinc-100">
+                            Visão geral:
+                          </strong>{" "}
+                          {meetingReport.conversationAnalysis.overview}
+                        </div>
+
+                        <div>
+                          <strong className="text-zinc-100">
+                            Alinhamento:
+                          </strong>{" "}
+                          {meetingReport.conversationAnalysis.alignment}
+                        </div>
+
+                        <div>
+                          <strong className="text-zinc-100">
+                            Divergências:
+                          </strong>{" "}
+                          {meetingReport.conversationAnalysis.divergences}
+                        </div>
+
+                        <div>
+                          <strong className="text-zinc-100">
+                            Clareza da comunicação:
+                          </strong>{" "}
+                          {meetingReport.conversationAnalysis.communicationClarity}
+                        </div>
+
+                        <div>
+                          <strong className="text-zinc-100">
+                            Pontos de atenção:
+                          </strong>
+
+                          <ul className="mt-2 space-y-2">
+                            {meetingReport.conversationAnalysis.risksAndAttentionPoints.map(
+                              (item, index) => (
+                                <li
+                                  key={`risk-${index}`}
+                                  className="flex gap-2"
+                                >
+                                  <span className="text-orange-400">
+                                    •
+                                  </span>
+                                  <span>{item}</span>
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-cyan-400/15 bg-cyan-500/[0.05] p-4 sm:p-5">
+                      <h3 className="font-semibold text-cyan-200">
+                        💡 Esclarecimentos
+                      </h3>
+
+                      <div className="mt-3 space-y-3">
+                        {meetingReport.clarifications.map(
+                          (item, index) => (
+                            <div
+                              key={`clarification-${index}`}
+                              className="rounded-xl border border-white/10 bg-black/20 p-3"
+                            >
+                              <strong className="text-sm text-zinc-100">
+                                {item.topic}
+                              </strong>
+
+                              <p className="mt-1 text-sm leading-relaxed text-zinc-400">
+                                {item.explanation}
+                              </p>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-yellow-400/15 bg-yellow-500/[0.05] p-4 sm:p-5">
+                      <h3 className="font-semibold text-yellow-200">
+                        ⚠️ Pontos não definidos
+                      </h3>
+
+                      <ul className="mt-3 space-y-2 text-sm leading-relaxed text-zinc-300">
+                        {meetingReport.unresolvedPoints.map(
+                          (item, index) => (
+                            <li
+                              key={`unresolved-${index}`}
+                              className="flex gap-2"
+                            >
+                              <span className="text-yellow-400">
+                                •
+                              </span>
+                              <span>{item}</span>
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 flex-wrap gap-2 border-t border-white/10 bg-[#0b0d14]/95 p-3 sm:p-4">
+                  <button
+                    type="button"
+                    onClick={
+                      downloadMeetingReportPdf
+                    }
+                    className="min-h-11 min-w-[140px] flex-1 rounded-xl border border-emerald-400/20 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/25 active:scale-[0.99] sm:hidden"
+                  >
+                    ⬇️ Baixar PDF
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void copyMeetingReport()
+                    }
+                    className="min-h-11 min-w-[140px] flex-1 rounded-xl border border-blue-400/20 bg-blue-500/15 px-4 text-sm font-semibold transition hover:bg-blue-500/25 active:scale-[0.99] sm:hidden"
+                  >
+                    📋 Copiar relatório
+                  </button>
+
+                  {meetingReport.transcriptEntryCount <
+                    transcriptEntries.length && (
+                    <button
+                      type="button"
+                      onClick={
+                        generateMeetingReport
+                      }
+                      className="min-h-11 flex-1 rounded-xl border border-amber-400/20 bg-amber-500/15 px-4 text-sm font-semibold text-amber-100 transition hover:bg-amber-500/25 active:scale-[0.99]"
+                    >
+                      ✨ Atualizar relatório
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex min-h-[260px] flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                <div className="text-4xl">
+                  📊
+                </div>
+
+                <p className="mt-3 text-sm text-zinc-300">
+                  Nenhum relatório disponível.
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   );
 }

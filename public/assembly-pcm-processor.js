@@ -4,19 +4,23 @@ class AssemblyPCMProcessor extends AudioWorkletProcessor {
 
     this.targetSampleRate = 16000;
 
-    // 100 ms em 16 kHz.
-    this.samplesPerPacket = 1600;
+    // 50 ms em 16 kHz = 800 amostras.
+    this.packetDurationMs = 50;
 
-    this.outputBuffer =
-      new Int16Array(
-        this.samplesPerPacket
-      );
+    this.samplesPerPacket = Math.round(
+      (this.targetSampleRate * this.packetDurationMs) / 1000
+    );
+
+    this.outputBuffer = new Int16Array(
+      this.samplesPerPacket
+    );
 
     this.outputIndex = 0;
 
-    // Usado para converter qualquer
-    // sample rate do dispositivo para 16 kHz.
+    // Estado do resampling contínuo.
     this.resampleAccumulator = 0;
+    this.resampleSum = 0;
+    this.resampleCount = 0;
   }
 
   pushSample(sample) {
@@ -58,8 +62,7 @@ class AssemblyPCMProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs) {
-    const input =
-      inputs[0];
+    const input = inputs[0];
 
     if (
       !input ||
@@ -68,15 +71,12 @@ class AssemblyPCMProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    const channel =
-      input[0];
+    const channel = input[0];
 
     if (!channel) {
       return true;
     }
 
-    // Se já estivermos em 16 kHz,
-    // não precisamos reduzir.
     if (
       sampleRate ===
       this.targetSampleRate
@@ -94,14 +94,18 @@ class AssemblyPCMProcessor extends AudioWorkletProcessor {
       return true;
     }
 
-    // Resampling simples e contínuo.
-    // O acumulador evita perder sincronia
-    // entre diferentes blocos do AudioWorklet.
+    // Resampling contínuo para dispositivos
+    // que não usam 16 kHz nativamente.
     for (
       let index = 0;
       index < channel.length;
       index += 1
     ) {
+      this.resampleSum +=
+        channel[index];
+
+      this.resampleCount += 1;
+
       this.resampleAccumulator +=
         this.targetSampleRate;
 
@@ -112,9 +116,18 @@ class AssemblyPCMProcessor extends AudioWorkletProcessor {
         this.resampleAccumulator -=
           sampleRate;
 
+        const averagedSample =
+          this.resampleCount > 0
+            ? this.resampleSum /
+              this.resampleCount
+            : channel[index];
+
         this.pushSample(
-          channel[index]
+          averagedSample
         );
+
+        this.resampleSum = 0;
+        this.resampleCount = 0;
       }
     }
 

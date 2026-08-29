@@ -17,6 +17,7 @@ const handle = app.getRequestHandler();
 await app.prepare();
 
 const MAX_PARTICIPANTS = 2;
+const MAX_REPORT_TRANSCRIPT_CHARS = 380000;
 
 const defaultMediaStatus = {
   isMicOn: true,
@@ -26,6 +27,10 @@ const defaultMediaStatus = {
 
 const roomTranscripts = new Map();
 const roomCleanupTimers = new Map();
+const roomHostSessions = new Map();
+const roomStartedAt = new Map();
+const roomReports = new Map();
+const roomReportPromises = new Map();
 
 function getRoomName(roomId) {
   return `meeting:${roomId}`;
@@ -51,6 +56,21 @@ function normalizeParticipantName(name, socketId) {
   return shortId
     ? `Participante-${shortId}`
     : "Participante";
+}
+
+function normalizeParticipantSessionId(value, socketId) {
+  if (typeof value === "string") {
+    const normalized = value
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 120);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return `socket-${socketId}`;
 }
 
 function normalizeMediaStatus(
@@ -102,6 +122,10 @@ function scheduleRoomCleanup(roomName) {
 
     if (!room || room.size === 0) {
       roomTranscripts.delete(roomName);
+      roomHostSessions.delete(roomName);
+      roomStartedAt.delete(roomName);
+      roomReports.delete(roomName);
+      roomReportPromises.delete(roomName);
     }
 
     roomCleanupTimers.delete(roomName);
@@ -149,6 +173,9 @@ function getRoomParticipants(
         isTranscribing:
           participantSocket.data.isTranscribing ??
           false,
+
+        isHost:
+          participantSocket.data.isHost === true,
       };
     })
     .filter(Boolean);
@@ -172,6 +199,358 @@ function broadcastRoomState(roomName) {
       count: participants.length,
     }
   );
+}
+
+function formatTranscriptForReport(transcript) {
+  return transcript
+    .map((entry) => {
+      const time = entry.time || "--:--";
+      const name = entry.senderName || "Participante";
+      const text = String(entry.text || "").trim();
+
+      return `[${time}] ${name}: ${text}`;
+    })
+    .join("\n");
+}
+
+function getReportParticipants(roomName, transcript) {
+  const names = new Set();
+
+  for (const entry of transcript) {
+    if (entry.senderName) {
+      names.add(String(entry.senderName));
+    }
+  }
+
+  for (const participant of getRoomParticipants(roomName)) {
+    if (participant?.participantName) {
+      names.add(participant.participantName);
+    }
+  }
+
+  return Array.from(names);
+}
+
+function getMeetingDurationSeconds(roomName, transcript) {
+  const startedAt =
+    roomStartedAt.get(roomName) ||
+    transcript[0]?.createdAt ||
+    Date.now();
+
+  const lastTranscriptAt =
+    transcript[transcript.length - 1]?.createdAt ||
+    Date.now();
+
+  const endedAt = Math.max(
+    Date.now(),
+    Number(lastTranscriptAt) || 0
+  );
+
+  return Math.max(
+    0,
+    Math.floor((endedAt - startedAt) / 1000)
+  );
+}
+
+const meetingReportSchema = {
+  type: "object",
+  properties: {
+    title: {
+      type: "string",
+    },
+    executiveSummary: {
+      type: "string",
+    },
+    topics: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+    keyPoints: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+    decisions: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+    actionItems: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          task: {
+            type: "string",
+          },
+          owner: {
+            type: "string",
+          },
+          deadline: {
+            type: "string",
+          },
+        },
+        required: [
+          "task",
+          "owner",
+          "deadline",
+        ],
+        additionalProperties: false,
+      },
+    },
+    conversationAnalysis: {
+      type: "object",
+      properties: {
+        overview: {
+          type: "string",
+        },
+        alignment: {
+          type: "string",
+        },
+        divergences: {
+          type: "string",
+        },
+        communicationClarity: {
+          type: "string",
+        },
+        risksAndAttentionPoints: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+        },
+      },
+      required: [
+        "overview",
+        "alignment",
+        "divergences",
+        "communicationClarity",
+        "risksAndAttentionPoints",
+      ],
+      additionalProperties: false,
+    },
+    clarifications: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          topic: {
+            type: "string",
+          },
+          explanation: {
+            type: "string",
+          },
+        },
+        required: [
+          "topic",
+          "explanation",
+        ],
+        additionalProperties: false,
+      },
+    },
+    unresolvedPoints: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+  },
+  required: [
+    "title",
+    "executiveSummary",
+    "topics",
+    "keyPoints",
+    "decisions",
+    "actionItems",
+    "conversationAnalysis",
+    "clarifications",
+    "unresolvedPoints",
+  ],
+  additionalProperties: false,
+};
+
+async function generateMeetingReport(roomName, roomId) {
+  const apiKey = process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "GROQ_API_KEY não configurada no servidor."
+    );
+  }
+
+  const transcript = [
+    ...getRoomTranscript(roomName),
+  ].sort(
+    (a, b) =>
+      (a.createdAt || 0) -
+      (b.createdAt || 0)
+  );
+
+  if (transcript.length === 0) {
+    throw new Error(
+      "Ainda não há transcrição suficiente para gerar o relatório."
+    );
+  }
+
+  const transcriptText =
+    formatTranscriptForReport(transcript);
+
+  if (
+    transcriptText.length >
+    MAX_REPORT_TRANSCRIPT_CHARS
+  ) {
+    throw new Error(
+      "A transcrição ficou grande demais para gerar o relatório de uma só vez."
+    );
+  }
+
+  const participants =
+    getReportParticipants(
+      roomName,
+      transcript
+    );
+
+  const startedAt =
+    roomStartedAt.get(roomName) ||
+    transcript[0]?.createdAt ||
+    Date.now();
+
+  const durationSeconds =
+    getMeetingDurationSeconds(
+      roomName,
+      transcript
+    );
+
+  const model =
+    process.env.GROQ_MODEL ||
+    "openai/gpt-oss-120b";
+
+  const controller =
+    new AbortController();
+
+  const timeout = setTimeout(
+    () => controller.abort(),
+    90000
+  );
+
+  try {
+    const groqResponse = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          reasoning_effort: "medium",
+          temperature: 0.2,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "Você é um analista profissional de reuniões.",
+                "Crie o relatório exclusivamente a partir da transcrição fornecida.",
+                "Nunca invente fatos, decisões, responsáveis, prazos ou intenções.",
+                "Quando algo não estiver definido, escreva exatamente: Não definido durante a reunião.",
+                "Diferencie claramente fatos discutidos, decisões tomadas e pontos pendentes.",
+                "Em análise da conversa, descreva apenas aspectos observáveis da comunicação, como clareza, alinhamento, divergências e pontos de atenção.",
+                "Não faça diagnósticos, julgamentos de personalidade ou inferências sobre características pessoais dos participantes.",
+                "Escreva todo o conteúdo em português do Brasil, com linguagem profissional, clara e objetiva.",
+              ].join(" "),
+            },
+            {
+              role: "user",
+              content: [
+                `Sala: ${roomId}`,
+                `Participantes: ${
+                  participants.length > 0
+                    ? participants.join(", ")
+                    : "Não definido durante a reunião."
+                }`,
+                `Início: ${new Date(
+                  startedAt
+                ).toLocaleString("pt-BR")}`,
+                `Duração aproximada em segundos: ${durationSeconds}`,
+                "",
+                "TRANSCRIÇÃO COMPLETA:",
+                transcriptText,
+              ].join("\n"),
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "meeting_report",
+              strict: true,
+              schema: meetingReportSchema,
+            },
+          },
+        }),
+      }
+    );
+
+    const groqData =
+      await groqResponse.json();
+
+    if (!groqResponse.ok) {
+      console.error(
+        "❌ Erro Groq ao gerar relatório:",
+        groqData
+      );
+
+      throw new Error(
+        groqData?.error?.message ||
+          "Não foi possível gerar o relatório com a IA."
+      );
+    }
+
+    const content =
+      groqData?.choices?.[0]?.message?.content;
+
+    if (
+      typeof content !== "string" ||
+      !content.trim()
+    ) {
+      throw new Error(
+        "A IA não retornou um relatório válido."
+      );
+    }
+
+    const aiReport =
+      JSON.parse(content);
+
+    return {
+      id: `report-${Date.now()}`,
+      roomId,
+      generatedAt: Date.now(),
+      startedAt,
+      durationSeconds,
+      participants,
+      transcriptEntryCount:
+        transcript.length,
+      ...aiReport,
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === "AbortError"
+    ) {
+      throw new Error(
+        "A geração do relatório demorou demais. Tente novamente."
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ==================================================
@@ -314,6 +693,7 @@ io.on("connection", (socket) => {
   };
 
   socket.data.isTranscribing = false;
+  socket.data.isHost = false;
 
   // ==================================================
   // ENTRAR NA SALA
@@ -324,6 +704,7 @@ io.on("connection", (socket) => {
     ({
       roomId,
       participantName,
+      participantSessionId,
       mediaStatus,
     }) => {
       if (!roomId) {
@@ -359,11 +740,43 @@ io.on("connection", (socket) => {
           socket.id
         );
 
+      const normalizedSessionId =
+        normalizeParticipantSessionId(
+          participantSessionId,
+          socket.id
+        );
+
+      if (
+        !roomHostSessions.has(
+          roomName
+        )
+      ) {
+        roomHostSessions.set(
+          roomName,
+          normalizedSessionId
+        );
+
+        roomStartedAt.set(
+          roomName,
+          Date.now()
+        );
+      }
+
+      const isHost =
+        roomHostSessions.get(
+          roomName
+        ) === normalizedSessionId;
+
       socket.data.roomName = roomName;
       socket.data.roomId = roomId;
 
       socket.data.participantName =
         normalizedName;
+
+      socket.data.participantSessionId =
+        normalizedSessionId;
+
+      socket.data.isHost = isHost;
 
       socket.data.mediaStatus =
         normalizeMediaStatus(mediaStatus);
@@ -378,7 +791,9 @@ io.on("connection", (socket) => {
 
       console.log("");
       console.log(
-        `👤 ${normalizedName} entrou na sala ${roomId}`
+        `👤 ${normalizedName} entrou na sala ${roomId}${
+          isHost ? " como anfitrião" : ""
+        }`
       );
       console.log(
         `🆔 Socket: ${socket.id}`
@@ -393,6 +808,8 @@ io.on("connection", (socket) => {
 
           participantName:
             normalizedName,
+
+          isHost,
         }
       );
 
@@ -414,6 +831,22 @@ io.on("connection", (socket) => {
         }
       );
 
+      if (
+        isHost &&
+        roomReports.has(roomName)
+      ) {
+        socket.emit(
+          "meeting-report-ready",
+          {
+            report:
+              roomReports.get(
+                roomName
+              ),
+            cached: true,
+          }
+        );
+      }
+
       socket
         .to(roomName)
         .emit(
@@ -430,6 +863,8 @@ io.on("connection", (socket) => {
 
             isTranscribing:
               false,
+
+            isHost,
           }
         );
 
@@ -651,6 +1086,8 @@ io.on("connection", (socket) => {
         );
       }
 
+      roomReports.delete(roomName);
+
       console.log(
         `📝 ${participantName}: ${text}`
       );
@@ -688,6 +1125,136 @@ io.on("connection", (socket) => {
             ),
         }
       );
+    }
+  );
+
+  // ==================================================
+  // RELATÓRIO DA REUNIÃO - SOMENTE ANFITRIÃO
+  // ==================================================
+
+  socket.on(
+    "generate-meeting-report",
+    async (
+      { roomId } = {},
+      callback
+    ) => {
+      const respond =
+        typeof callback === "function"
+          ? callback
+          : () => {};
+
+      if (!roomId) {
+        respond({
+          ok: false,
+          error:
+            "Sala inválida.",
+        });
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        respond({
+          ok: false,
+          error:
+            "Você não está nesta sala.",
+        });
+        return;
+      }
+
+      if (
+        socket.data.isHost !== true
+      ) {
+        respond({
+          ok: false,
+          error:
+            "Apenas o anfitrião pode gerar o relatório da reunião.",
+        });
+        return;
+      }
+
+      const transcript =
+        getRoomTranscript(roomName);
+
+      if (
+        transcript.length === 0
+      ) {
+        respond({
+          ok: false,
+          error:
+            "Ainda não há falas transcritas para analisar.",
+        });
+        return;
+      }
+
+      const cachedReport =
+        roomReports.get(roomName);
+
+      if (cachedReport) {
+        respond({
+          ok: true,
+          report:
+            cachedReport,
+          cached: true,
+        });
+        return;
+      }
+
+      try {
+        let reportPromise =
+          roomReportPromises.get(
+            roomName
+          );
+
+        if (!reportPromise) {
+          reportPromise =
+            generateMeetingReport(
+              roomName,
+              roomId
+            );
+
+          roomReportPromises.set(
+            roomName,
+            reportPromise
+          );
+        }
+
+        const report =
+          await reportPromise;
+
+        roomReports.set(
+          roomName,
+          report
+        );
+
+        respond({
+          ok: true,
+          report,
+          cached: false,
+        });
+      } catch (error) {
+        console.error(
+          "❌ Erro ao gerar relatório:",
+          error
+        );
+
+        respond({
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Não foi possível gerar o relatório.",
+        });
+      } finally {
+        roomReportPromises.delete(
+          roomName
+        );
+      }
     }
   );
 
