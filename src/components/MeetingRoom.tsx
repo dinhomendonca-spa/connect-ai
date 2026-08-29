@@ -102,13 +102,10 @@ const NOTIFICATION_CLASSES: Record<
 > = {
   info:
     "border-blue-400/20 bg-blue-500/10 text-blue-100",
-
   success:
     "border-emerald-400/20 bg-emerald-500/10 text-emerald-100",
-
   warning:
     "border-yellow-400/20 bg-yellow-500/10 text-yellow-100",
-
   danger:
     "border-red-400/20 bg-red-500/10 text-red-100",
 };
@@ -116,13 +113,13 @@ const NOTIFICATION_CLASSES: Record<
 function formatMeetingDuration(
   totalSeconds: number
 ): string {
-  const hours =
-    Math.floor(totalSeconds / 3600);
+  const hours = Math.floor(
+    totalSeconds / 3600
+  );
 
-  const minutes =
-    Math.floor(
-      (totalSeconds % 3600) / 60
-    );
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60
+  );
 
   const seconds =
     totalSeconds % 60;
@@ -453,6 +450,50 @@ export default function MeetingRoom({
       );
     };
   }, []);
+
+  useEffect(() => {
+    function handleEscape(
+      event: KeyboardEvent
+    ) {
+      if (
+        event.key !==
+        "Escape"
+      ) {
+        return;
+      }
+
+      if (
+        isTranscriptOpen
+      ) {
+        setIsTranscriptOpen(
+          false
+        );
+      }
+
+      if (
+        isChatOpen
+      ) {
+        setIsChatOpen(
+          false
+        );
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleEscape
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleEscape
+      );
+    };
+  }, [
+    isTranscriptOpen,
+    isChatOpen,
+  ]);
 
   useEffect(() => {
     const meetingStartedAt =
@@ -1318,6 +1359,7 @@ export default function MeetingRoom({
               "transcription-status-change",
               {
                 roomId,
+
                 isTranscribing:
                   true,
               }
@@ -1672,11 +1714,13 @@ export default function MeetingRoom({
             .getUserMedia({
               video: {
                 width: {
-                  ideal: 1280,
+                  ideal:
+                    1280,
                 },
 
                 height: {
-                  ideal: 720,
+                  ideal:
+                    720,
                 },
 
                 aspectRatio: {
@@ -2916,7 +2960,7 @@ export default function MeetingRoom({
                 className={
                   isFullscreenLayout
                     ? "relative flex h-full w-full items-center justify-center bg-black"
-                    : "relative flex aspect-video min-h-[280px] w-full items-center justify-center bg-black sm:min-h-[420px] lg:min-h-[540px]"
+                    : "relative flex aspect-video min-h-[260px] w-full items-center justify-center bg-black sm:min-h-[420px] lg:min-h-[540px]"
                 }
               >
                 {remoteParticipantId ? (
@@ -3283,10 +3327,10 @@ export default function MeetingRoom({
 
           {isChatOpen && (
             <aside
-              className={`fixed inset-x-3 bottom-24 z-40 flex max-h-[62dvh] min-h-[380px] flex-col overflow-hidden rounded-[1.8rem] xl:static xl:max-h-[720px] ${glassPanel}`}
+              className={`fixed inset-2 z-50 flex min-h-0 flex-col overflow-hidden rounded-[1.5rem] ${glassPanel} xl:static xl:max-h-[720px] xl:min-h-[380px]`}
             >
-              <div className="flex items-center justify-between border-b border-white/10 p-4">
-                <div>
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#0b0d14]/90 p-3 backdrop-blur-2xl sm:p-4">
+                <div className="min-w-0">
                   <h2 className="font-semibold">
                     💬 Chat
                   </h2>
@@ -3301,12 +3345,13 @@ export default function MeetingRoom({
 
                 <button
                   type="button"
+                  aria-label="Fechar chat"
                   onClick={() =>
                     setIsChatOpen(
                       false
                     )
                   }
-                  className="h-10 w-10 rounded-xl bg-white/5"
+                  className="ml-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg transition hover:bg-white/20 active:scale-95"
                 >
                   ✕
                 </button>
@@ -3316,11 +3361,11 @@ export default function MeetingRoom({
                 ref={
                   chatScrollRef
                 }
-                className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-4"
+                className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3 sm:p-4"
               >
                 {messages.length ===
                   0 && (
-                  <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
+                  <div className="flex min-h-[150px] flex-1 items-center justify-center text-sm text-zinc-500">
                     Nenhuma mensagem ainda.
                   </div>
                 )}
@@ -3365,7 +3410,7 @@ export default function MeetingRoom({
                 onSubmit={
                   sendMessage
                 }
-                className="border-t border-white/10 p-3"
+                className="shrink-0 border-t border-white/10 bg-[#0b0d14]/90 p-3 backdrop-blur-2xl"
               >
                 <div className="flex gap-2">
                   <input
@@ -3390,7 +3435,7 @@ export default function MeetingRoom({
                     disabled={
                       !newMessage.trim()
                     }
-                    className="h-12 w-12 rounded-2xl bg-blue-500/20 disabled:opacity-40"
+                    className="h-12 w-12 shrink-0 rounded-2xl bg-blue-500/20 disabled:opacity-40"
                   >
                     ➤
                   </button>
@@ -3401,11 +3446,11 @@ export default function MeetingRoom({
 
           {isTranscriptOpen && (
             <aside
-              className={`fixed inset-x-3 bottom-24 z-40 flex max-h-[65dvh] min-h-[410px] flex-col overflow-hidden rounded-[1.8rem] xl:static xl:max-h-[720px] ${glassPanel}`}
+              className={`fixed inset-2 z-50 flex min-h-0 flex-col overflow-hidden rounded-[1.5rem] ${glassPanel} xl:static xl:max-h-[720px] xl:min-h-[410px]`}
             >
-              <div className="flex items-center justify-between border-b border-white/10 p-4">
-                <div>
-                  <h2 className="font-semibold">
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#0b0d14]/90 p-3 backdrop-blur-2xl sm:p-4">
+                <div className="min-w-0">
+                  <h2 className="truncate font-semibold">
                     🎙️ Transcrição Live
                   </h2>
 
@@ -3419,18 +3464,19 @@ export default function MeetingRoom({
 
                 <button
                   type="button"
+                  aria-label="Fechar transcrição"
                   onClick={() =>
                     setIsTranscriptOpen(
                       false
                     )
                   }
-                  className="h-10 w-10 rounded-xl bg-white/5"
+                  className="ml-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg transition hover:bg-white/20 active:scale-95"
                 >
                   ✕
                 </button>
               </div>
 
-              <div className="border-b border-white/10 bg-black/10 px-4 py-3 text-xs">
+              <div className="shrink-0 border-b border-white/10 bg-black/20 px-3 py-2 text-xs sm:px-4 sm:py-3">
                 {isAssemblyConnecting && (
                   <span className="text-yellow-300">
                     ⌛ Conectando ao serviço de transcrição...
@@ -3456,12 +3502,12 @@ export default function MeetingRoom({
                 ref={
                   transcriptScrollRef
                 }
-                className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3 sm:p-4"
+                className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3 sm:p-4"
               >
                 {transcriptEntries.length ===
                   0 &&
                 !interimTranscript ? (
-                  <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+                  <div className="flex min-h-[150px] flex-1 flex-col items-center justify-center px-6 text-center">
                     <div className="text-4xl">
                       🎙️
                     </div>
@@ -3534,7 +3580,7 @@ export default function MeetingRoom({
                 )}
               </div>
 
-              <div className="border-t border-white/10 p-3">
+              <div className="shrink-0 border-t border-white/10 bg-[#0b0d14]/90 p-2 backdrop-blur-2xl sm:p-3">
                 <div
                   className={`rounded-xl px-3 py-2 text-center text-xs ${
                     isTranscribing
