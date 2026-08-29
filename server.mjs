@@ -16,14 +16,6 @@ const handle = app.getRequestHandler();
 
 await app.prepare();
 
-const httpServer = createServer((req, res) => {
-  handle(req, res);
-});
-
-const io = new Server(httpServer, {
-  maxHttpBufferSize: 10 * 1024 * 1024,
-});
-
 const MAX_PARTICIPANTS = 2;
 
 const defaultMediaStatus = {
@@ -106,8 +98,7 @@ function scheduleRoomCleanup(roomName) {
   cancelRoomCleanup(roomName);
 
   const timer = setTimeout(() => {
-    const room =
-      io.sockets.adapter.rooms.get(roomName);
+    const room = io.sockets.adapter.rooms.get(roomName);
 
     if (!room || room.size === 0) {
       roomTranscripts.delete(roomName);
@@ -123,8 +114,7 @@ function getRoomParticipants(
   roomName,
   excludedSocketId = null
 ) {
-  const room =
-    io.sockets.adapter.rooms.get(roomName);
+  const room = io.sockets.adapter.rooms.get(roomName);
 
   if (!room) {
     return [];
@@ -184,332 +174,134 @@ function broadcastRoomState(roomName) {
   );
 }
 
-function audioDataToBuffer(audioData) {
-  if (!audioData) {
-    return null;
-  }
+// ==================================================
+// HTTP
+// ==================================================
 
-  if (Buffer.isBuffer(audioData)) {
-    return audioData;
-  }
-
-  if (audioData instanceof ArrayBuffer) {
-    return Buffer.from(audioData);
-  }
-
-  if (ArrayBuffer.isView(audioData)) {
-    return Buffer.from(
-      audioData.buffer,
-      audioData.byteOffset,
-      audioData.byteLength
-    );
-  }
-
-  if (
-    audioData.type === "Buffer" &&
-    Array.isArray(audioData.data)
-  ) {
-    return Buffer.from(audioData.data);
-  }
-
-  return null;
-}
-
-function getAudioFileInfo(mimeType) {
-  const normalized =
-    String(mimeType || "").toLowerCase();
-
-  if (
-    normalized.includes("mp4") ||
-    normalized.includes("m4a")
-  ) {
-    return {
-      type: "audio/mp4",
-      extension: "m4a",
-    };
-  }
-
-  if (normalized.includes("ogg")) {
-    return {
-      type: "audio/ogg",
-      extension: "ogg",
-    };
-  }
-
-  return {
-    type: "audio/webm",
-    extension: "webm",
-  };
-}
-
-async function transcribeWithGroq(
-  audioBuffer,
-  mimeType
-) {
-  const apiKey =
-    process.env.GROQ_API_KEY;
-
-  if (!apiKey) {
-    throw new Error(
-      "GROQ_API_KEY não configurada no servidor."
-    );
-  }
-
-  const { type, extension } =
-    getAudioFileInfo(mimeType);
-
-  const formData = new FormData();
-
-  const blob = new Blob(
-    [audioBuffer],
-    {
-      type,
-    }
-  );
-
-  formData.append(
-    "file",
-    blob,
-    `connectai-audio.${extension}`
-  );
-
-  formData.append(
-    "model",
-    "whisper-large-v3"
-  );
-
-  formData.append(
-    "language",
-    "pt"
-  );
-
-  formData.append(
-    "response_format",
-    "json"
-  );
-
-  formData.append(
-    "temperature",
-    "0"
-  );
-
-  formData.append(
-    "prompt",
-    "Transcrição de uma reunião em português do Brasil. Preserve nomes próprios, termos técnicos, palavras de programação e pontuação natural."
-  );
-
-  const response = await fetch(
-    "https://api.groq.com/openai/v1/audio/transcriptions",
-    {
-      method: "POST",
-
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-
-      body: formData,
-    }
-  );
-
-  if (!response.ok) {
-    const errorText =
-      await response.text();
-
-    throw new Error(
-      `Groq ${response.status}: ${errorText.slice(
-        0,
-        500
-      )}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  if (
-    typeof data?.text !== "string"
-  ) {
-    return "";
-  }
-
-  return data.text.trim();
-}
-
-function saveTranscriptEntry({
-  socket,
-  roomName,
-  text,
-  time,
-  capturedAt,
-}) {
-  const participantName =
-    normalizeParticipantName(
-      socket.data.participantName,
-      socket.id
-    );
-
-  const savedEntry = {
-    id:
-      `${Date.now()}-${socket.id}-${Math.random()}`,
-
-    senderId:
-      socket.id,
-
-    senderName:
-      participantName,
-
-    text,
-
-    time:
-      time ||
-      new Date().toLocaleTimeString(
-        "pt-BR",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-        }
-      ),
-
-    createdAt:
-      Number(capturedAt) ||
-      Date.now(),
-  };
-
-  const transcript =
-    getRoomTranscript(roomName);
-
-  transcript.push(savedEntry);
-
-  transcript.sort(
-    (a, b) =>
-      a.createdAt - b.createdAt
-  );
-
-  if (transcript.length > 2000) {
-    transcript.splice(
-      0,
-      transcript.length - 2000
-    );
-  }
-
-  console.log(
-    `📝 ${participantName}: ${text}`
-  );
-
-  // Agora enviamos também para quem falou.
-  // Assim todos recebem exatamente
-  // a mesma versão criada pelo servidor.
-  io.to(roomName).emit(
-    "transcript-entry",
-    savedEntry
-  );
-}
-
-async function processTranscriptionChunk(
-  socket,
-  payload
-) {
-  const {
-    roomId,
-    audioData,
-    mimeType,
-    time,
-    capturedAt,
-  } = payload || {};
-
-  if (!roomId || !audioData) {
-    return;
-  }
-
-  const roomName =
-    getRoomName(roomId);
-
-  if (
-    socket.data.roomName !== roomName
-  ) {
-    return;
-  }
-
-  if (
-    socket.data.isTranscribing !== true
-  ) {
-    return;
-  }
-
-  const audioBuffer =
-    audioDataToBuffer(audioData);
-
-  if (
-    !audioBuffer ||
-    audioBuffer.length < 1000
-  ) {
-    return;
-  }
-
-  if (
-    audioBuffer.length >
-    8 * 1024 * 1024
-  ) {
-    socket.emit(
-      "transcription-error",
-      {
-        message:
-          "O trecho de áudio ficou grande demais.",
-      }
-    );
-
-    return;
-  }
-
-  socket.emit(
-    "transcription-processing",
-    {
-      active: true,
-    }
-  );
-
-  try {
-    const text =
-      await transcribeWithGroq(
-        audioBuffer,
-        mimeType
+const httpServer = createServer(
+  async (req, res) => {
+    try {
+      const requestUrl = new URL(
+        req.url || "/",
+        `http://${req.headers.host || "localhost"}`
       );
 
-    if (!text) {
-      return;
+      // ==============================================
+      // TOKEN TEMPORÁRIO DA ASSEMBLYAI
+      // ==============================================
+
+      if (
+        req.method === "GET" &&
+        requestUrl.pathname ===
+          "/api/assemblyai-token"
+      ) {
+        res.setHeader(
+          "Cache-Control",
+          "no-store, no-cache, must-revalidate"
+        );
+
+        res.setHeader(
+          "Content-Type",
+          "application/json; charset=utf-8"
+        );
+
+        const apiKey =
+          process.env.ASSEMBLYAI_API_KEY;
+
+        if (!apiKey) {
+          res.statusCode = 500;
+
+          res.end(
+            JSON.stringify({
+              error:
+                "ASSEMBLYAI_API_KEY não configurada no servidor.",
+            })
+          );
+
+          return;
+        }
+
+        const tokenUrl =
+          new URL(
+            "https://streaming.assemblyai.com/v3/token"
+          );
+
+        tokenUrl.searchParams.set(
+          "expires_in_seconds",
+          "60"
+        );
+
+        tokenUrl.searchParams.set(
+          "max_session_duration_seconds",
+          "10800"
+        );
+
+        const assemblyResponse =
+          await fetch(tokenUrl, {
+            headers: {
+              Authorization: apiKey,
+            },
+          });
+
+        const responseText =
+          await assemblyResponse.text();
+
+        if (!assemblyResponse.ok) {
+          console.error(
+            "❌ Erro ao gerar token AssemblyAI:",
+            responseText
+          );
+
+          res.statusCode =
+            assemblyResponse.status;
+
+          res.end(
+            JSON.stringify({
+              error:
+                "Não foi possível gerar o token da AssemblyAI.",
+            })
+          );
+
+          return;
+        }
+
+        res.statusCode = 200;
+        res.end(responseText);
+
+        return;
+      }
+
+      await handle(req, res);
+    } catch (error) {
+      console.error(
+        "Erro HTTP:",
+        error
+      );
+
+      if (!res.headersSent) {
+        res.statusCode = 500;
+
+        res.setHeader(
+          "Content-Type",
+          "application/json; charset=utf-8"
+        );
+      }
+
+      res.end(
+        JSON.stringify({
+          error:
+            "Erro interno do servidor.",
+        })
+      );
     }
-
-    saveTranscriptEntry({
-      socket,
-      roomName,
-      text,
-      time,
-      capturedAt,
-    });
-  } catch (error) {
-    console.error(
-      "❌ Erro na transcrição:",
-      error
-    );
-
-    socket.emit(
-      "transcription-error",
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Erro ao transcrever o áudio.",
-      }
-    );
-  } finally {
-    socket.emit(
-      "transcription-processing",
-      {
-        active: false,
-      }
-    );
   }
-}
+);
+
+// ==================================================
+// SOCKET.IO
+// ==================================================
+
+const io = new Server(httpServer);
 
 io.on("connection", (socket) => {
   console.log(
@@ -521,11 +313,7 @@ io.on("connection", (socket) => {
     ...defaultMediaStatus,
   };
 
-  socket.data.isTranscribing =
-    false;
-
-  socket.data.transcriptionQueue =
-    Promise.resolve();
+  socket.data.isTranscribing = false;
 
   // ==================================================
   // ENTRAR NA SALA
@@ -571,27 +359,20 @@ io.on("connection", (socket) => {
           socket.id
         );
 
-      socket.data.roomName =
-        roomName;
-
-      socket.data.roomId =
-        roomId;
+      socket.data.roomName = roomName;
+      socket.data.roomId = roomId;
 
       socket.data.participantName =
         normalizedName;
 
       socket.data.mediaStatus =
-        normalizeMediaStatus(
-          mediaStatus
-        );
+        normalizeMediaStatus(mediaStatus);
 
       socket.data.isTranscribing =
         false;
 
       const existingParticipants =
-        getRoomParticipants(
-          roomName
-        );
+        getRoomParticipants(roomName);
 
       socket.join(roomName);
 
@@ -666,10 +447,7 @@ io.on("connection", (socket) => {
       roomId,
       status,
     }) => {
-      if (
-        !roomId ||
-        !status
-      ) {
+      if (!roomId || !status) {
         return;
       }
 
@@ -770,26 +548,117 @@ io.on("connection", (socket) => {
   );
 
   // ==================================================
-  // ÁUDIO PARA O WHISPER
+  // FALA FINAL DA ASSEMBLYAI
   // ==================================================
 
   socket.on(
-    "transcription-audio-chunk",
-    (payload) => {
-      socket.data.transcriptionQueue =
-        socket.data.transcriptionQueue
-          .then(() =>
-            processTranscriptionChunk(
-              socket,
-              payload
-            )
-          )
-          .catch((error) => {
-            console.error(
-              "Erro na fila de transcrição:",
-              error
-            );
-          });
+    "transcript-entry",
+    ({
+      roomId,
+      entry,
+    }) => {
+      if (
+        !roomId ||
+        !entry?.text
+      ) {
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        return;
+      }
+
+      const text =
+        String(entry.text)
+          .trim()
+          .slice(0, 5000);
+
+      if (!text) {
+        return;
+      }
+
+      const participantName =
+        normalizeParticipantName(
+          socket.data.participantName,
+          socket.id
+        );
+
+      const savedEntry = {
+        id:
+          entry.id ||
+          `${Date.now()}-${socket.id}`,
+
+        senderId:
+          socket.id,
+
+        senderName:
+          participantName,
+
+        text,
+
+        time:
+          entry.time ||
+          new Date()
+            .toLocaleTimeString(
+              "pt-BR",
+              {
+                hour: "2-digit",
+                minute: "2-digit",
+              }
+            ),
+
+        createdAt:
+          Number(
+            entry.createdAt
+          ) || Date.now(),
+      };
+
+      const transcript =
+        getRoomTranscript(roomName);
+
+      const alreadyExists =
+        transcript.some(
+          (item) =>
+            item.id ===
+            savedEntry.id
+        );
+
+      if (alreadyExists) {
+        return;
+      }
+
+      transcript.push(savedEntry);
+
+      transcript.sort(
+        (a, b) =>
+          a.createdAt -
+          b.createdAt
+      );
+
+      if (
+        transcript.length > 2000
+      ) {
+        transcript.splice(
+          0,
+          transcript.length -
+            2000
+        );
+      }
+
+      console.log(
+        `📝 ${participantName}: ${text}`
+      );
+
+      io.to(roomName).emit(
+        "transcript-entry",
+        savedEntry
+      );
     }
   );
 
@@ -832,10 +701,7 @@ io.on("connection", (socket) => {
       targetId,
       offer,
     }) => {
-      if (
-        !targetId ||
-        !offer
-      ) {
+      if (!targetId || !offer) {
         return;
       }
 
@@ -1047,6 +913,10 @@ io.on("connection", (socket) => {
     }
   );
 });
+
+// ==================================================
+// INICIAR SERVIDOR
+// ==================================================
 
 httpServer.listen(
   port,
