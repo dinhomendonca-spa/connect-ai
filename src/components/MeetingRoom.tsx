@@ -175,17 +175,28 @@ const NOTIFICATION_CLASSES: Record<
 // CRONÔMETRO
 // ==================================================
 
-function formatMeetingDuration(totalSeconds: number) {
-  const hours = Math.floor(totalSeconds / 3600);
+function formatMeetingDuration(
+  totalSeconds: number
+) {
+  const hours =
+    Math.floor(totalSeconds / 3600);
 
-  const minutes = Math.floor(
-    (totalSeconds % 3600) / 60
-  );
+  const minutes =
+    Math.floor(
+      (totalSeconds % 3600) / 60
+    );
 
-  const seconds = totalSeconds % 60;
+  const seconds =
+    totalSeconds % 60;
 
-  return [hours, minutes, seconds]
-    .map((value) => String(value).padStart(2, "0"))
+  return [
+    hours,
+    minutes,
+    seconds,
+  ]
+    .map((value) =>
+      String(value).padStart(2, "0")
+    )
     .join(":");
 }
 
@@ -255,6 +266,13 @@ export default function MeetingRoom({
   const videoStageRef =
     useRef<HTMLElement>(null);
 
+  // NOVO:
+  // Mantemos o nome confirmado pelo servidor
+  // também em uma ref para não depender
+  // de closures antigas do React.
+  const participantNameRef =
+    useRef("");
+
   // ==================================================
   // IDENTIDADE
   // ==================================================
@@ -291,8 +309,10 @@ export default function MeetingRoom({
   // MÍDIA
   // ==================================================
 
-  const [isMicOn, setIsMicOn] =
-    useState(true);
+  const [
+    isMicOn,
+    setIsMicOn,
+  ] = useState(true);
 
   const [
     isCameraOn,
@@ -410,28 +430,37 @@ export default function MeetingRoom({
     useCallback(
       (
         text: string,
-        tone: NotificationTone = "info"
+        tone:
+          NotificationTone =
+          "info"
       ) => {
         const id =
           `${Date.now()}-${Math.random()}`;
 
-        setNotifications((current) => [
-          ...current,
-          {
-            id,
-            text,
-            tone,
-          },
-        ]);
+        setNotifications(
+          (current) => [
+            ...current,
+            {
+              id,
+              text,
+              tone,
+            },
+          ]
+        );
 
-        const timeout = setTimeout(() => {
-          setNotifications((current) =>
-            current.filter(
-              (notification) =>
-                notification.id !== id
-            )
-          );
-        }, 4500);
+        const timeout =
+          setTimeout(() => {
+            setNotifications(
+              (current) =>
+                current.filter(
+                  (
+                    notification
+                  ) =>
+                    notification.id !==
+                    id
+                )
+            );
+          }, 4500);
 
         notificationTimeoutsRef.current.push(
           timeout
@@ -467,12 +496,17 @@ export default function MeetingRoom({
 
   async function toggleFullscreen() {
     try {
-      if (document.fullscreenElement) {
+      if (
+        document.fullscreenElement
+      ) {
         await document.exitFullscreen();
+
         return;
       }
 
-      if (!videoStageRef.current) {
+      if (
+        !videoStageRef.current
+      ) {
         return;
       }
 
@@ -495,12 +529,15 @@ export default function MeetingRoom({
   // ==================================================
 
   useEffect(() => {
-    const supported = Boolean(
-      window.SpeechRecognition ||
-        window.webkitSpeechRecognition
-    );
+    const supported =
+      Boolean(
+        window.SpeechRecognition ||
+          window.webkitSpeechRecognition
+      );
 
-    setTranscriptionSupported(supported);
+    setTranscriptionSupported(
+      supported
+    );
   }, []);
 
   // ==================================================
@@ -508,14 +545,18 @@ export default function MeetingRoom({
   // ==================================================
 
   useEffect(() => {
-    const meetingStartedAt = Date.now();
+    const meetingStartedAt =
+      Date.now();
 
     function updateTimer() {
       const elapsed =
-        Date.now() - meetingStartedAt;
+        Date.now() -
+        meetingStartedAt;
 
       setMeetingSeconds(
-        Math.floor(elapsed / 1000)
+        Math.floor(
+          elapsed / 1000
+        )
       );
     }
 
@@ -528,12 +569,14 @@ export default function MeetingRoom({
       );
 
     return () => {
-      window.clearInterval(interval);
+      window.clearInterval(
+        interval
+      );
     };
   }, []);
 
   // ==================================================
-  // IDENTIDADE
+  // IDENTIDADE LOCAL
   // ==================================================
 
   function getParticipantName() {
@@ -543,9 +586,13 @@ export default function MeetingRoom({
           CURRENT_USER_SESSION_KEY
         );
 
-      if (storedCurrentUser) {
+      if (
+        storedCurrentUser
+      ) {
         const currentUser: CurrentUser =
-          JSON.parse(storedCurrentUser);
+          JSON.parse(
+            storedCurrentUser
+          );
 
         if (
           currentUser.name &&
@@ -572,7 +619,8 @@ export default function MeetingRoom({
 
     const randomNumber =
       Math.floor(
-        1000 + Math.random() * 9000
+        1000 +
+          Math.random() * 9000
       );
 
     const generatedName =
@@ -591,7 +639,8 @@ export default function MeetingRoom({
   // ==================================================
 
   function broadcastMediaStatus(
-    changes: Partial<MediaStatus>
+    changes:
+      Partial<MediaStatus>
   ) {
     const nextStatus = {
       ...localMediaStatusRef.current,
@@ -605,7 +654,8 @@ export default function MeetingRoom({
       "media-status-change",
       {
         roomId,
-        status: nextStatus,
+        status:
+          nextStatus,
       }
     );
   }
@@ -617,17 +667,23 @@ export default function MeetingRoom({
   function clearRemoteParticipant() {
     peerConnectionRef.current?.close();
 
-    peerConnectionRef.current = null;
+    peerConnectionRef.current =
+      null;
 
-    pendingIceCandidatesRef.current = [];
+    pendingIceCandidatesRef.current =
+      [];
 
-    setRemoteParticipantId(null);
+    setRemoteParticipantId(
+      null
+    );
 
     setRemoteParticipantName(
       "Participante"
     );
 
-    setIsRemoteTranscribing(false);
+    setIsRemoteTranscribing(
+      false
+    );
 
     const defaultStatus = {
       ...DEFAULT_MEDIA_STATUS,
@@ -636,11 +692,17 @@ export default function MeetingRoom({
     remoteMediaStatusRef.current =
       defaultStatus;
 
-    setRemoteMediaStatus(defaultStatus);
+    setRemoteMediaStatus(
+      defaultStatus
+    );
 
-    setIsRemoteConnected(false);
+    setIsRemoteConnected(
+      false
+    );
 
-    if (remoteVideoRef.current) {
+    if (
+      remoteVideoRef.current
+    ) {
       remoteVideoRef.current.srcObject =
         null;
     }
@@ -673,7 +735,10 @@ export default function MeetingRoom({
     const audioTrack =
       cameraStream?.getAudioTracks()[0];
 
-    if (audioTrack && cameraStream) {
+    if (
+      audioTrack &&
+      cameraStream
+    ) {
       peerConnection.addTrack(
         audioTrack,
         cameraStream
@@ -685,7 +750,8 @@ export default function MeetingRoom({
       cameraStream?.getVideoTracks()[0];
 
     const activeVideoStream =
-      screenStream ?? cameraStream;
+      screenStream ??
+      cameraStream;
 
     if (
       activeVideoTrack &&
@@ -697,43 +763,43 @@ export default function MeetingRoom({
       );
     }
 
-    peerConnection.ontrack = (
-      event
-    ) => {
-      const remoteStream =
-        event.streams[0];
+    peerConnection.ontrack =
+      (event) => {
+        const remoteStream =
+          event.streams[0];
 
-      if (
-        remoteVideoRef.current &&
-        remoteStream
-      ) {
-        remoteVideoRef.current.srcObject =
-          remoteStream;
-      }
-
-      setIsRemoteConnected(true);
-    };
-
-    peerConnection.onicecandidate = (
-      event
-    ) => {
-      if (
-        !event.candidate ||
-        !socketRef.current
-      ) {
-        return;
-      }
-
-      socketRef.current.emit(
-        "webrtc-ice-candidate",
-        {
-          targetId,
-
-          candidate:
-            event.candidate.toJSON(),
+        if (
+          remoteVideoRef.current &&
+          remoteStream
+        ) {
+          remoteVideoRef.current.srcObject =
+            remoteStream;
         }
-      );
-    };
+
+        setIsRemoteConnected(
+          true
+        );
+      };
+
+    peerConnection.onicecandidate =
+      (event) => {
+        if (
+          !event.candidate ||
+          !socketRef.current
+        ) {
+          return;
+        }
+
+        socketRef.current.emit(
+          "webrtc-ice-candidate",
+          {
+            targetId,
+
+            candidate:
+              event.candidate.toJSON(),
+          }
+        );
+      };
 
     peerConnection.onconnectionstatechange =
       () => {
@@ -745,16 +811,24 @@ export default function MeetingRoom({
           state
         );
 
-        if (state === "connected") {
-          setIsRemoteConnected(true);
+        if (
+          state ===
+          "connected"
+        ) {
+          setIsRemoteConnected(
+            true
+          );
         }
 
         if (
           state === "failed" ||
           state === "closed" ||
-          state === "disconnected"
+          state ===
+            "disconnected"
         ) {
-          setIsRemoteConnected(false);
+          setIsRemoteConnected(
+            false
+          );
         }
       };
 
@@ -762,10 +836,13 @@ export default function MeetingRoom({
   }
 
   async function flushPendingIceCandidates(
-    peerConnection: RTCPeerConnection
+    peerConnection:
+      RTCPeerConnection
   ) {
-    for (const candidate of
-      pendingIceCandidatesRef.current) {
+    for (
+      const candidate
+      of pendingIceCandidatesRef.current
+    ) {
       try {
         await peerConnection.addIceCandidate(
           candidate
@@ -778,11 +855,13 @@ export default function MeetingRoom({
       }
     }
 
-    pendingIceCandidatesRef.current = [];
+    pendingIceCandidatesRef.current =
+      [];
   }
 
   async function replaceOutgoingVideoTrack(
-    newTrack: MediaStreamTrack
+    newTrack:
+      MediaStreamTrack
   ) {
     const peerConnection =
       peerConnectionRef.current;
@@ -796,7 +875,9 @@ export default function MeetingRoom({
         .getSenders()
         .find(
           (sender) =>
-            sender.track?.kind === "video"
+            sender.track
+              ?.kind ===
+            "video"
         );
 
     if (!videoSender) {
@@ -822,15 +903,16 @@ export default function MeetingRoom({
   async function startScreenSharing() {
     try {
       const screenStream =
-        await navigator.mediaDevices.getDisplayMedia(
-          {
+        await navigator
+          .mediaDevices
+          .getDisplayMedia({
             video: true,
             audio: false,
-          }
-        );
+          });
 
       const screenTrack =
-        screenStream.getVideoTracks()[0];
+        screenStream
+          .getVideoTracks()[0];
 
       if (!screenTrack) {
         return;
@@ -843,20 +925,26 @@ export default function MeetingRoom({
         screenTrack
       );
 
-      if (localVideoRef.current) {
+      if (
+        localVideoRef.current
+      ) {
         localVideoRef.current.srcObject =
           screenStream;
       }
 
-      setIsScreenSharing(true);
+      setIsScreenSharing(
+        true
+      );
 
       broadcastMediaStatus({
-        isScreenSharing: true,
+        isScreenSharing:
+          true,
       });
 
-      screenTrack.onended = () => {
-        void stopScreenSharing();
-      };
+      screenTrack.onended =
+        () => {
+          void stopScreenSharing();
+        };
     } catch (error) {
       console.log(
         "Compartilhamento cancelado:",
@@ -870,7 +958,8 @@ export default function MeetingRoom({
       mediaStreamRef.current;
 
     const cameraTrack =
-      cameraStream?.getVideoTracks()[0];
+      cameraStream
+        ?.getVideoTracks()[0];
 
     if (cameraTrack) {
       await replaceOutgoingVideoTrack(
@@ -880,28 +969,40 @@ export default function MeetingRoom({
 
     screenStreamRef.current
       ?.getTracks()
-      .forEach((track) => {
-        track.onended = null;
-        track.stop();
-      });
+      .forEach(
+        (track) => {
+          track.onended =
+            null;
 
-    screenStreamRef.current = null;
+          track.stop();
+        }
+      );
 
-    if (localVideoRef.current) {
+    screenStreamRef.current =
+      null;
+
+    if (
+      localVideoRef.current
+    ) {
       localVideoRef.current.srcObject =
-        cameraStream ?? null;
+        cameraStream ??
+        null;
     }
 
-    setIsScreenSharing(false);
+    setIsScreenSharing(
+      false
+    );
 
     broadcastMediaStatus({
-      isScreenSharing: false,
+      isScreenSharing:
+        false,
     });
   }
 
   async function toggleScreenSharing() {
     if (isScreenSharing) {
       await stopScreenSharing();
+
       return;
     }
 
@@ -922,7 +1023,9 @@ export default function MeetingRoom({
       window.webkitSpeechRecognition;
 
     if (!Recognition) {
-      setTranscriptionSupported(false);
+      setTranscriptionSupported(
+        false
+      );
 
       addNotification(
         "Seu navegador não oferece suporte à transcrição.",
@@ -935,9 +1038,14 @@ export default function MeetingRoom({
     const recognition =
       new Recognition();
 
-    recognition.lang = "pt-BR";
-    recognition.continuous = true;
-    recognition.interimResults = true;
+    recognition.lang =
+      "pt-BR";
+
+    recognition.continuous =
+      true;
+
+    recognition.interimResults =
+      true;
 
     shouldKeepTranscribingRef.current =
       true;
@@ -946,176 +1054,221 @@ export default function MeetingRoom({
       recognition;
 
     setIsChatOpen(false);
-    setIsTranscriptOpen(true);
 
-    recognition.onstart = () => {
-      setIsTranscribing(true);
+    setIsTranscriptOpen(
+      true
+    );
 
-      socketRef.current?.emit(
-        "transcription-status-change",
-        {
-          roomId,
-          isTranscribing: true,
-        }
-      );
-    };
-
-    recognition.onresult = (event) => {
-      let finalText = "";
-      let interimText = "";
-
-      for (
-        let index = event.resultIndex;
-        index < event.results.length;
-        index += 1
-      ) {
-        const result =
-          event.results[index];
-
-        const text =
-          result[0]?.transcript?.trim();
-
-        if (!text) {
-          continue;
-        }
-
-        if (result.isFinal) {
-          finalText += `${text} `;
-        } else {
-          interimText += `${text} `;
-        }
-      }
-
-      setInterimTranscript(
-        interimText.trim()
-      );
-
-      const normalizedFinalText =
-        finalText.trim();
-
-      if (!normalizedFinalText) {
-        return;
-      }
-
-      const socket =
-        socketRef.current;
-
-      if (!socket) {
-        return;
-      }
-
-      const time =
-        new Date().toLocaleTimeString(
-          "pt-BR",
-          {
-            hour: "2-digit",
-            minute: "2-digit",
-          }
+    recognition.onstart =
+      () => {
+        setIsTranscribing(
+          true
         );
-
-      const id =
-        `${Date.now()}-${Math.random()}`;
-
-      const ownEntry: TranscriptEntry = {
-        id,
-
-        senderId:
-          socket.id ?? "local",
-
-        senderName:
-          participantName || "Você",
-
-        text:
-          normalizedFinalText,
-
-        time,
-
-        isOwn: true,
-      };
-
-      setTranscriptEntries(
-        (current) => [
-          ...current,
-          ownEntry,
-        ]
-      );
-
-      socket.emit(
-        "transcript-entry",
-        {
-          roomId,
-
-          entry: {
-            id,
-
-            text:
-              normalizedFinalText,
-
-            time,
-          },
-        }
-      );
-
-      setInterimTranscript("");
-    };
-
-    recognition.onerror = (event) => {
-      console.error(
-        "Erro na transcrição:",
-        event.error
-      );
-
-      if (
-        event.error === "not-allowed" ||
-        event.error ===
-          "service-not-allowed" ||
-        event.error ===
-          "audio-capture"
-      ) {
-        shouldKeepTranscribingRef.current =
-          false;
-
-        setIsTranscribing(false);
 
         socketRef.current?.emit(
           "transcription-status-change",
           {
             roomId,
-            isTranscribing: false,
+            isTranscribing:
+              true,
+          }
+        );
+      };
+
+    recognition.onresult =
+      (event) => {
+        let finalText = "";
+        let interimText = "";
+
+        for (
+          let index =
+            event.resultIndex;
+          index <
+          event.results.length;
+          index += 1
+        ) {
+          const result =
+            event.results[index];
+
+          const text =
+            result[0]
+              ?.transcript
+              ?.trim();
+
+          if (!text) {
+            continue;
+          }
+
+          if (
+            result.isFinal
+          ) {
+            finalText +=
+              `${text} `;
+          } else {
+            interimText +=
+              `${text} `;
+          }
+        }
+
+        setInterimTranscript(
+          interimText.trim()
+        );
+
+        const normalizedFinalText =
+          finalText.trim();
+
+        if (
+          !normalizedFinalText
+        ) {
+          return;
+        }
+
+        const socket =
+          socketRef.current;
+
+        if (!socket) {
+          return;
+        }
+
+        const time =
+          new Date()
+            .toLocaleTimeString(
+              "pt-BR",
+              {
+                hour:
+                  "2-digit",
+
+                minute:
+                  "2-digit",
+              }
+            );
+
+        const id =
+          `${Date.now()}-${Math.random()}`;
+
+        const confirmedName =
+          participantNameRef.current ||
+          "Você";
+
+        const ownEntry:
+          TranscriptEntry =
+          {
+            id,
+
+            senderId:
+              socket.id ??
+              "local",
+
+            senderName:
+              confirmedName,
+
+            text:
+              normalizedFinalText,
+
+            time,
+
+            isOwn: true,
+          };
+
+        setTranscriptEntries(
+          (current) => [
+            ...current,
+            ownEntry,
+          ]
+        );
+
+        socket.emit(
+          "transcript-entry",
+          {
+            roomId,
+
+            entry: {
+              id,
+
+              text:
+                normalizedFinalText,
+
+              time,
+            },
           }
         );
 
-        addNotification(
-          "A transcrição não conseguiu acessar o reconhecimento de voz.",
-          "warning"
+        setInterimTranscript(
+          ""
         );
-      }
+      };
 
-      if (event.error === "network") {
-        addNotification(
-          "O reconhecimento de voz perdeu a conexão.",
-          "warning"
+    recognition.onerror =
+      (event) => {
+        console.error(
+          "Erro na transcrição:",
+          event.error
         );
-      }
-    };
 
-    recognition.onend = () => {
-      if (
-        shouldKeepTranscribingRef.current
-      ) {
-        window.setTimeout(() => {
-          try {
-            recognition.start();
-          } catch {
-            // sessão anterior encerrando
-          }
-        }, 250);
+        if (
+          event.error ===
+            "not-allowed" ||
+          event.error ===
+            "service-not-allowed" ||
+          event.error ===
+            "audio-capture"
+        ) {
+          shouldKeepTranscribingRef.current =
+            false;
 
-        return;
-      }
+          setIsTranscribing(
+            false
+          );
 
-      setIsTranscribing(false);
-    };
+          socketRef.current?.emit(
+            "transcription-status-change",
+            {
+              roomId,
+              isTranscribing:
+                false,
+            }
+          );
+
+          addNotification(
+            "A transcrição não conseguiu acessar o reconhecimento de voz.",
+            "warning"
+          );
+        }
+
+        if (
+          event.error ===
+          "network"
+        ) {
+          addNotification(
+            "O reconhecimento de voz perdeu a conexão.",
+            "warning"
+          );
+        }
+      };
+
+    recognition.onend =
+      () => {
+        if (
+          shouldKeepTranscribingRef.current
+        ) {
+          window.setTimeout(
+            () => {
+              try {
+                recognition.start();
+              } catch {
+                // sessão anterior encerrando
+              }
+            },
+            250
+          );
+
+          return;
+        }
+
+        setIsTranscribing(
+          false
+        );
+      };
 
     try {
       recognition.start();
@@ -1128,7 +1281,9 @@ export default function MeetingRoom({
       shouldKeepTranscribingRef.current =
         false;
 
-      setIsTranscribing(false);
+      setIsTranscribing(
+        false
+      );
 
       addNotification(
         "Não foi possível iniciar a transcrição.",
@@ -1144,7 +1299,8 @@ export default function MeetingRoom({
     const recognition =
       speechRecognitionRef.current;
 
-    speechRecognitionRef.current = null;
+    speechRecognitionRef.current =
+      null;
 
     if (recognition) {
       try {
@@ -1154,14 +1310,20 @@ export default function MeetingRoom({
       }
     }
 
-    setIsTranscribing(false);
-    setInterimTranscript("");
+    setIsTranscribing(
+      false
+    );
+
+    setInterimTranscript(
+      ""
+    );
 
     socketRef.current?.emit(
       "transcription-status-change",
       {
         roomId,
-        isTranscribing: false,
+        isTranscribing:
+          false,
       }
     );
   }
@@ -1171,32 +1333,44 @@ export default function MeetingRoom({
   // ==================================================
 
   useEffect(() => {
-    let componentActive = true;
+    let componentActive =
+      true;
 
     const myParticipantName =
       getParticipantName();
+
+    participantNameRef.current =
+      myParticipantName;
 
     setParticipantName(
       myParticipantName
     );
 
     async function startMeeting() {
+      // ==============================================
+      // CÂMERA E MICROFONE
+      // ==============================================
+
       try {
         setMediaError("");
 
         const stream =
-          await navigator.mediaDevices.getUserMedia(
-            {
+          await navigator
+            .mediaDevices
+            .getUserMedia({
               video: true,
               audio: true,
-            }
-          );
+            });
 
-        if (!componentActive) {
+        if (
+          !componentActive
+        ) {
           stream
             .getTracks()
-            .forEach((track) =>
-              track.stop()
+            .forEach(
+              (track) => {
+                track.stop();
+              }
             );
 
           return;
@@ -1205,37 +1379,48 @@ export default function MeetingRoom({
         mediaStreamRef.current =
           stream;
 
-        if (localVideoRef.current) {
+        if (
+          localVideoRef.current
+        ) {
           localVideoRef.current.srcObject =
             stream;
         }
 
         const audioTrack =
-          stream.getAudioTracks()[0];
+          stream
+            .getAudioTracks()[0];
 
         const videoTrack =
-          stream.getVideoTracks()[0];
+          stream
+            .getVideoTracks()[0];
 
         const initialMicState =
-          audioTrack?.enabled ?? false;
+          audioTrack?.enabled ??
+          false;
 
         const initialCameraState =
-          videoTrack?.enabled ?? false;
+          videoTrack?.enabled ??
+          false;
 
-        setIsMicOn(initialMicState);
+        setIsMicOn(
+          initialMicState
+        );
 
         setIsCameraOn(
           initialCameraState
         );
 
-        localMediaStatusRef.current = {
-          isMicOn: initialMicState,
+        localMediaStatusRef.current =
+          {
+            isMicOn:
+              initialMicState,
 
-          isCameraOn:
-            initialCameraState,
+            isCameraOn:
+              initialCameraState,
 
-          isScreenSharing: false,
-        };
+            isScreenSharing:
+              false,
+          };
       } catch (error) {
         console.error(
           "Erro ao acessar mídia:",
@@ -1247,42 +1432,179 @@ export default function MeetingRoom({
         );
 
         setIsMicOn(false);
-        setIsCameraOn(false);
 
-        localMediaStatusRef.current = {
-          isMicOn: false,
-          isCameraOn: false,
-          isScreenSharing: false,
-        };
+        setIsCameraOn(
+          false
+        );
+
+        localMediaStatusRef.current =
+          {
+            isMicOn: false,
+
+            isCameraOn:
+              false,
+
+            isScreenSharing:
+              false,
+          };
       }
 
-      if (!componentActive) {
+      if (
+        !componentActive
+      ) {
         return;
       }
 
-      const socket = io();
+      // ==============================================
+      // SOCKET
+      // ==============================================
 
-      socketRef.current = socket;
+      const socket =
+        io();
 
-      socket.on("connect", () => {
-        console.log(
-          "Socket conectado:",
-          socket.id
-        );
+      socketRef.current =
+        socket;
 
-        socket.emit("join-room", {
-          roomId,
+      socket.on(
+        "connect",
+        () => {
+          console.log(
+            "Socket conectado:",
+            socket.id
+          );
 
-          participantName:
-            myParticipantName,
+          socket.emit(
+            "join-room",
+            {
+              roomId,
 
-          mediaStatus:
-            localMediaStatusRef.current,
-        });
-      });
+              participantName:
+                myParticipantName,
+
+              mediaStatus:
+                localMediaStatusRef.current,
+            }
+          );
+        }
+      );
 
       // ==============================================
-      // TRANSCRIÇÃO
+      // NOVO:
+      // IDENTIDADE CONFIRMADA PELO SERVIDOR
+      // ==============================================
+
+      socket.on(
+        "participant-identity",
+        ({
+          participantId,
+          participantName:
+            confirmedName,
+        }: {
+          participantId:
+            string;
+
+          participantName:
+            string;
+        }) => {
+          console.log(
+            "Identidade confirmada:",
+            participantId,
+            confirmedName
+          );
+
+          participantNameRef.current =
+            confirmedName;
+
+          setParticipantName(
+            confirmedName
+          );
+        }
+      );
+
+      // ==============================================
+      // NOVO:
+      // ESTADO OFICIAL DOS PARTICIPANTES
+      // ==============================================
+
+      socket.on(
+        "room-participants-state",
+        ({
+          count,
+          participants,
+        }: {
+          count: number;
+
+          participants:
+            RoomParticipant[];
+        }) => {
+          setParticipantCount(
+            count
+          );
+
+          const ownParticipant =
+            participants.find(
+              (
+                participant
+              ) =>
+                participant.participantId ===
+                socket.id
+            );
+
+          if (
+            ownParticipant
+          ) {
+            participantNameRef.current =
+              ownParticipant.participantName;
+
+            setParticipantName(
+              ownParticipant.participantName
+            );
+          }
+
+          const remoteParticipant =
+            participants.find(
+              (
+                participant
+              ) =>
+                participant.participantId !==
+                socket.id
+            );
+
+          if (
+            remoteParticipant
+          ) {
+            setRemoteParticipantId(
+              remoteParticipant.participantId
+            );
+
+            setRemoteParticipantName(
+              remoteParticipant.participantName
+            );
+
+            remoteMediaStatusRef.current =
+              remoteParticipant.mediaStatus;
+
+            setRemoteMediaStatus(
+              remoteParticipant.mediaStatus
+            );
+
+            setIsRemoteTranscribing(
+              remoteParticipant.isTranscribing
+            );
+          } else {
+            setRemoteParticipantName(
+              "Participante"
+            );
+
+            setIsRemoteTranscribing(
+              false
+            );
+          }
+        }
+      );
+
+      // ==============================================
+      // HISTÓRICO DA TRANSCRIÇÃO
       // ==============================================
 
       socket.on(
@@ -1290,31 +1612,42 @@ export default function MeetingRoom({
         ({
           entries,
         }: {
-          entries: ServerTranscriptEntry[];
+          entries:
+            ServerTranscriptEntry[];
         }) => {
           setTranscriptEntries(
-            entries.map((entry) => ({
-              ...entry,
+            entries.map(
+              (entry) => ({
+                ...entry,
 
-              isOwn:
-                entry.senderId ===
-                socket.id,
-            }))
+                isOwn:
+                  entry.senderId ===
+                  socket.id,
+              })
+            )
           );
         }
       );
 
+      // ==============================================
+      // NOVA TRANSCRIÇÃO
+      // ==============================================
+
       socket.on(
         "transcript-entry",
         (
-          entry: ServerTranscriptEntry
+          entry:
+            ServerTranscriptEntry
         ) => {
           setTranscriptEntries(
             (current) => {
               if (
                 current.some(
-                  (item) =>
-                    item.id === entry.id
+                  (
+                    item
+                  ) =>
+                    item.id ===
+                    entry.id
                 )
               ) {
                 return current;
@@ -1325,7 +1658,9 @@ export default function MeetingRoom({
 
                 {
                   ...entry,
-                  isOwn: false,
+                  isOwn:
+                    entry.senderId ===
+                    socket.id,
                 },
               ];
             }
@@ -1334,7 +1669,7 @@ export default function MeetingRoom({
       );
 
       // ==============================================
-      // PARTICIPANTES
+      // PARTICIPANTES EXISTENTES
       // ==============================================
 
       socket.on(
@@ -1342,10 +1677,12 @@ export default function MeetingRoom({
         async ({
           participants,
         }: {
-          participants: RoomParticipant[];
+          participants:
+            RoomParticipant[];
         }) => {
           if (
-            participants.length === 0
+            participants.length ===
+            0
           ) {
             return;
           }
@@ -1403,6 +1740,10 @@ export default function MeetingRoom({
         }
       );
 
+      // ==============================================
+      // PARTICIPANTE ENTROU
+      // ==============================================
+
       socket.on(
         "participant-joined",
         ({
@@ -1442,6 +1783,10 @@ export default function MeetingRoom({
         }
       );
 
+      // ==============================================
+      // TRANSCRIÇÃO REMOTA
+      // ==============================================
+
       socket.on(
         "participant-transcription-status",
         ({
@@ -1451,9 +1796,14 @@ export default function MeetingRoom({
           isTranscribing:
             remoteIsTranscribing,
         }: {
-          participantId: string;
-          participantName: string;
-          isTranscribing: boolean;
+          participantId:
+            string;
+
+          participantName:
+            string;
+
+          isTranscribing:
+            boolean;
         }) => {
           setIsRemoteTranscribing(
             remoteIsTranscribing
@@ -1480,9 +1830,14 @@ export default function MeetingRoom({
 
           mediaStatus,
         }: {
-          participantId: string;
-          participantName: string;
-          mediaStatus: MediaStatus;
+          participantId:
+            string;
+
+          participantName:
+            string;
+
+          mediaStatus:
+            MediaStatus;
         }) => {
           const previousStatus =
             remoteMediaStatusRef.current;
@@ -1561,7 +1916,7 @@ export default function MeetingRoom({
       );
 
       // ==============================================
-      // WEBRTC
+      // WEBRTC OFFER
       // ==============================================
 
       socket.on(
@@ -1571,8 +1926,12 @@ export default function MeetingRoom({
           senderName,
           offer,
         }: {
-          senderId: string;
-          senderName: string;
+          senderId:
+            string;
+
+          senderName:
+            string;
+
           offer:
             RTCSessionDescriptionInit;
         }) => {
@@ -1609,7 +1968,9 @@ export default function MeetingRoom({
             socket.emit(
               "webrtc-answer",
               {
-                targetId: senderId,
+                targetId:
+                  senderId,
+
                 answer,
               }
             );
@@ -1622,18 +1983,28 @@ export default function MeetingRoom({
         }
       );
 
+      // ==============================================
+      // WEBRTC ANSWER
+      // ==============================================
+
       socket.on(
         "webrtc-answer",
         async ({
           senderName,
           answer,
         }: {
-          senderId: string;
-          senderName: string;
+          senderId:
+            string;
+
+          senderName:
+            string;
+
           answer:
             RTCSessionDescriptionInit;
         }) => {
-          if (senderName) {
+          if (
+            senderName
+          ) {
             setRemoteParticipantName(
               senderName
             );
@@ -1642,7 +2013,9 @@ export default function MeetingRoom({
           const peerConnection =
             peerConnectionRef.current;
 
-          if (!peerConnection) {
+          if (
+            !peerConnection
+          ) {
             return;
           }
 
@@ -1663,12 +2036,17 @@ export default function MeetingRoom({
         }
       );
 
+      // ==============================================
+      // ICE
+      // ==============================================
+
       socket.on(
         "webrtc-ice-candidate",
         async ({
           candidate,
         }: {
-          senderId: string;
+          senderId:
+            string;
 
           candidate:
             RTCIceCandidateInit;
@@ -1701,7 +2079,7 @@ export default function MeetingRoom({
       );
 
       // ==============================================
-      // SALA
+      // CONTAGEM
       // ==============================================
 
       socket.on(
@@ -1709,11 +2087,18 @@ export default function MeetingRoom({
         ({
           count,
         }: {
-          count: number;
+          count:
+            number;
         }) => {
-          setParticipantCount(count);
+          setParticipantCount(
+            count
+          );
         }
       );
+
+      // ==============================================
+      // PARTICIPANTE SAIU
+      // ==============================================
 
       socket.on(
         "participant-left",
@@ -1721,8 +2106,11 @@ export default function MeetingRoom({
           participantName:
             leftName,
         }: {
-          participantId: string;
-          participantName: string;
+          participantId:
+            string;
+
+          participantName:
+            string;
         }) => {
           addNotification(
             `${leftName} saiu da reunião.`,
@@ -1733,14 +2121,23 @@ export default function MeetingRoom({
         }
       );
 
-      socket.on("room-full", () => {
-        setRoomFull(true);
+      // ==============================================
+      // SALA CHEIA
+      // ==============================================
 
-        addNotification(
-          "Esta sala já possui 2 participantes.",
-          "warning"
-        );
-      });
+      socket.on(
+        "room-full",
+        () => {
+          setRoomFull(
+            true
+          );
+
+          addNotification(
+            "Esta sala já possui 2 participantes.",
+            "warning"
+          );
+        }
+      );
 
       // ==============================================
       // CHAT
@@ -1754,27 +2151,39 @@ export default function MeetingRoom({
           time,
           senderName,
         }: {
-          id: string;
-          senderId: string;
-          text: string;
-          time: string;
-          senderName: string;
+          id:
+            string;
+
+          senderId:
+            string;
+
+          text:
+            string;
+
+          time:
+            string;
+
+          senderName:
+            string;
         }) => {
-          setMessages((current) => [
-            ...current,
+          setMessages(
+            (current) => [
+              ...current,
 
-            {
-              id,
-              text,
-              time,
+              {
+                id,
+                text,
+                time,
 
-              senderName:
-                senderName ||
-                "Participante",
+                senderName:
+                  senderName ||
+                  "Participante",
 
-              isOwn: false,
-            },
-          ]);
+                isOwn:
+                  false,
+              },
+            ]
+          );
         }
       );
     }
@@ -1782,7 +2191,8 @@ export default function MeetingRoom({
     startMeeting();
 
     return () => {
-      componentActive = false;
+      componentActive =
+        false;
 
       shouldKeepTranscribingRef.current =
         false;
@@ -1793,42 +2203,62 @@ export default function MeetingRoom({
         // já encerrado
       }
 
-      speechRecognitionRef.current = null;
+      speechRecognitionRef.current =
+        null;
 
       notificationTimeoutsRef.current.forEach(
         (timeout) => {
-          clearTimeout(timeout);
+          clearTimeout(
+            timeout
+          );
         }
       );
 
-      notificationTimeoutsRef.current = [];
+      notificationTimeoutsRef.current =
+        [];
 
       mediaStreamRef.current
         ?.getTracks()
-        .forEach((track) => {
-          track.stop();
-        });
+        .forEach(
+          (track) => {
+            track.stop();
+          }
+        );
 
       screenStreamRef.current
         ?.getTracks()
-        .forEach((track) => {
-          track.onended = null;
-          track.stop();
-        });
+        .forEach(
+          (track) => {
+            track.onended =
+              null;
+
+            track.stop();
+          }
+        );
 
       peerConnectionRef.current?.close();
 
       socketRef.current?.disconnect();
 
-      mediaStreamRef.current = null;
-      screenStreamRef.current = null;
-      peerConnectionRef.current = null;
-      socketRef.current = null;
+      mediaStreamRef.current =
+        null;
+
+      screenStreamRef.current =
+        null;
+
+      peerConnectionRef.current =
+        null;
+
+      socketRef.current =
+        null;
     };
-  }, [roomId, addNotification]);
+  }, [
+    roomId,
+    addNotification,
+  ]);
 
   // ==================================================
-  // SCROLL INTERNO DO CHAT
+  // SCROLL DO CHAT
   // ==================================================
 
   useEffect(() => {
@@ -1844,24 +2274,36 @@ export default function MeetingRoom({
     }
 
     const frame =
-      requestAnimationFrame(() => {
-        container.scrollTo({
-          top: container.scrollHeight,
-          behavior: "smooth",
-        });
-      });
+      requestAnimationFrame(
+        () => {
+          container.scrollTo({
+            top:
+              container.scrollHeight,
+
+            behavior:
+              "smooth",
+          });
+        }
+      );
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(
+        frame
+      );
     };
-  }, [messages, isChatOpen]);
+  }, [
+    messages,
+    isChatOpen,
+  ]);
 
   // ==================================================
-  // SCROLL INTERNO DA TRANSCRIÇÃO
+  // SCROLL DA TRANSCRIÇÃO
   // ==================================================
 
   useEffect(() => {
-    if (!isTranscriptOpen) {
+    if (
+      !isTranscriptOpen
+    ) {
       return;
     }
 
@@ -1873,15 +2315,22 @@ export default function MeetingRoom({
     }
 
     const frame =
-      requestAnimationFrame(() => {
-        container.scrollTo({
-          top: container.scrollHeight,
-          behavior: "smooth",
-        });
-      });
+      requestAnimationFrame(
+        () => {
+          container.scrollTo({
+            top:
+              container.scrollHeight,
+
+            behavior:
+              "smooth",
+          });
+        }
+      );
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(
+        frame
+      );
     };
   }, [
     transcriptEntries,
@@ -1890,7 +2339,7 @@ export default function MeetingRoom({
   ]);
 
   // ==================================================
-  // CONTROLES DE MÍDIA
+  // CONTROLES
   // ==================================================
 
   function toggleMicrophone() {
@@ -1899,7 +2348,8 @@ export default function MeetingRoom({
 
     if (
       !tracks ||
-      tracks.length === 0
+      tracks.length ===
+        0
     ) {
       return;
     }
@@ -1907,14 +2357,20 @@ export default function MeetingRoom({
     const nextState =
       !isMicOn;
 
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
+    tracks.forEach(
+      (track) => {
+        track.enabled =
+          nextState;
+      }
+    );
 
-    setIsMicOn(nextState);
+    setIsMicOn(
+      nextState
+    );
 
     broadcastMediaStatus({
-      isMicOn: nextState,
+      isMicOn:
+        nextState,
     });
   }
 
@@ -1924,7 +2380,8 @@ export default function MeetingRoom({
 
     if (
       !tracks ||
-      tracks.length === 0
+      tracks.length ===
+        0
     ) {
       return;
     }
@@ -1932,14 +2389,20 @@ export default function MeetingRoom({
     const nextState =
       !isCameraOn;
 
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
+    tracks.forEach(
+      (track) => {
+        track.enabled =
+          nextState;
+      }
+    );
 
-    setIsCameraOn(nextState);
+    setIsCameraOn(
+      nextState
+    );
 
     broadcastMediaStatus({
-      isCameraOn: nextState,
+      isCameraOn:
+        nextState,
     });
   }
 
@@ -1948,7 +2411,8 @@ export default function MeetingRoom({
   // ==================================================
 
   function sendMessage(
-    event: FormEvent<HTMLFormElement>
+    event:
+      FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
@@ -1958,37 +2422,53 @@ export default function MeetingRoom({
     const socket =
       socketRef.current;
 
-    if (!text || !socket) {
+    if (
+      !text ||
+      !socket
+    ) {
       return;
     }
 
     const time =
-      new Date().toLocaleTimeString(
-        "pt-BR",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-        }
-      );
+      new Date()
+        .toLocaleTimeString(
+          "pt-BR",
+          {
+            hour:
+              "2-digit",
+
+            minute:
+              "2-digit",
+          }
+        );
 
     const messageId =
       `${Date.now()}-${Math.random()}`;
 
-    const ownMessage: ChatMessage = {
-      id: messageId,
-      text,
-      time,
+    const ownMessage:
+      ChatMessage =
+      {
+        id:
+          messageId,
 
-      senderName:
-        participantName || "Você",
+        text,
 
-      isOwn: true,
-    };
+        time,
 
-    setMessages((current) => [
-      ...current,
-      ownMessage,
-    ]);
+        senderName:
+          participantNameRef.current ||
+          "Você",
+
+        isOwn:
+          true,
+      };
+
+    setMessages(
+      (current) => [
+        ...current,
+        ownMessage,
+      ]
+    );
 
     socket.emit(
       "send-chat-message",
@@ -1996,8 +2476,11 @@ export default function MeetingRoom({
         roomId,
 
         message: {
-          id: messageId,
+          id:
+            messageId,
+
           text,
+
           time,
         },
       }
@@ -2025,11 +2508,6 @@ export default function MeetingRoom({
         "Erro ao copiar código:",
         error
       );
-
-      addNotification(
-        "Não foi possível copiar o código.",
-        "warning"
-      );
     }
   }
 
@@ -2048,11 +2526,6 @@ export default function MeetingRoom({
         "Erro ao copiar convite:",
         error
       );
-
-      addNotification(
-        "Não foi possível copiar o convite.",
-        "warning"
-      );
     }
   }
 
@@ -2065,22 +2538,30 @@ export default function MeetingRoom({
 
     mediaStreamRef.current
       ?.getTracks()
-      .forEach((track) => {
-        track.stop();
-      });
+      .forEach(
+        (track) => {
+          track.stop();
+        }
+      );
 
     screenStreamRef.current
       ?.getTracks()
-      .forEach((track) => {
-        track.onended = null;
-        track.stop();
-      });
+      .forEach(
+        (track) => {
+          track.onended =
+            null;
+
+          track.stop();
+        }
+      );
 
     peerConnectionRef.current?.close();
 
     socketRef.current?.disconnect();
 
-    router.push("/dashboard");
+    router.push(
+      "/dashboard"
+    );
   }
 
   // ==================================================
@@ -2108,10 +2589,7 @@ export default function MeetingRoom({
 
   return (
     <main className="relative min-h-[100dvh] overflow-x-hidden bg-[#05070d] text-white">
-      {/* ================================================= */}
-      {/* LUZES DE FUNDO / GLASSMORPHISM */}
-      {/* ================================================= */}
-
+      {/* FUNDO */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-blue-500/15 blur-3xl" />
 
@@ -2120,28 +2598,26 @@ export default function MeetingRoom({
         <div className="absolute bottom-[-150px] left-1/3 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
       </div>
 
-      {/* ================================================= */}
       {/* NOTIFICAÇÕES */}
-      {/* ================================================= */}
-
       <div className="fixed left-3 right-3 top-3 z-[100] flex flex-col gap-2 sm:left-auto sm:right-4 sm:w-[380px]">
         {notifications.map(
           (notification) => (
             <div
-              key={notification.id}
+              key={
+                notification.id
+              }
               className={`rounded-2xl border px-4 py-3 text-sm shadow-2xl backdrop-blur-2xl ${NOTIFICATION_CLASSES[notification.tone]}`}
             >
-              {notification.text}
+              {
+                notification.text
+              }
             </div>
           )
         )}
       </div>
 
       <div className="relative z-10 mx-auto max-w-7xl px-3 pb-28 pt-3 sm:px-5 sm:pb-8 sm:pt-5">
-        {/* ================================================= */}
-        {/* CABEÇALHO DE VIDRO */}
-        {/* ================================================= */}
-
+        {/* CABEÇALHO */}
         <header
           className={`mb-4 rounded-[1.7rem] p-4 sm:p-5 ${glassPanel}`}
         >
@@ -2173,7 +2649,11 @@ export default function MeetingRoom({
                 </span>
 
                 <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-zinc-300 backdrop-blur-xl">
-                  👥 {participantCount}/2
+                  👥{" "}
+                  {
+                    participantCount
+                  }
+                  /2
                 </span>
 
                 <span className="rounded-full border border-emerald-400/10 bg-emerald-400/5 px-3 py-1.5 font-mono text-emerald-300 backdrop-blur-xl">
@@ -2188,7 +2668,9 @@ export default function MeetingRoom({
             <div className="grid grid-cols-2 gap-2 sm:flex">
               <button
                 type="button"
-                onClick={copyRoomCode}
+                onClick={
+                  copyRoomCode
+                }
                 className="min-h-11 rounded-xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-200 backdrop-blur-xl transition hover:bg-white/10 active:scale-95 sm:px-4 sm:text-sm"
               >
                 📋 Código
@@ -2196,7 +2678,9 @@ export default function MeetingRoom({
 
               <button
                 type="button"
-                onClick={copyInviteLink}
+                onClick={
+                  copyInviteLink
+                }
                 className="min-h-11 rounded-xl border border-blue-400/20 bg-blue-500/15 px-3 text-xs font-semibold text-blue-100 shadow-lg backdrop-blur-xl transition hover:bg-blue-500/25 active:scale-95 sm:px-4 sm:text-sm"
               >
                 🔗 Convidar
@@ -2206,15 +2690,13 @@ export default function MeetingRoom({
 
           <div className="mt-4 overflow-hidden rounded-xl border border-white/5 bg-black/20 px-3 py-2">
             <p className="truncate text-[11px] text-zinc-500 sm:text-xs">
-              Sala: {roomId}
+              Sala:{" "}
+              {roomId}
             </p>
           </div>
         </header>
 
-        {/* ================================================= */}
-        {/* AVISOS */}
-        {/* ================================================= */}
-
+        {/* TRANSCRIÇÃO ATIVA */}
         {(isTranscribing ||
           isRemoteTranscribing) && (
           <div className="mb-4 flex items-center gap-3 rounded-2xl border border-red-400/15 bg-red-500/10 px-4 py-3 text-xs text-red-100 shadow-xl backdrop-blur-xl sm:text-sm">
@@ -2232,13 +2714,10 @@ export default function MeetingRoom({
 
         {roomFull && (
           <div className="mb-4 rounded-2xl border border-yellow-400/15 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100 backdrop-blur-xl">
-            Esta sala já possui 2 participantes.
+            Esta sala já possui
+            2 participantes.
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* CONTEÚDO */}
-        {/* ================================================= */}
 
         <div
           className={`grid gap-4 ${
@@ -2248,12 +2727,11 @@ export default function MeetingRoom({
           }`}
         >
           <div className="min-w-0">
-            {/* ================================================= */}
             {/* VÍDEOS */}
-            {/* ================================================= */}
-
             <section
-              ref={videoStageRef}
+              ref={
+                videoStageRef
+              }
               className={
                 isFullscreenLayout
                   ? "relative grid h-screen w-screen grid-cols-1 grid-rows-2 gap-0 overflow-hidden bg-black"
@@ -2272,10 +2750,7 @@ export default function MeetingRoom({
                 </button>
               )}
 
-              {/* ================================================= */}
-              {/* VÍDEO LOCAL */}
-              {/* ================================================= */}
-
+              {/* LOCAL */}
               <div
                 className={`${videoTileClasses} ${
                   isFullscreenLayout
@@ -2284,7 +2759,9 @@ export default function MeetingRoom({
                 }`}
               >
                 <video
-                  ref={localVideoRef}
+                  ref={
+                    localVideoRef
+                  }
                   autoPlay
                   playsInline
                   muted
@@ -2314,8 +2791,10 @@ export default function MeetingRoom({
                 <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs font-medium backdrop-blur-xl sm:text-sm">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
 
-                  <span className="max-w-[160px] truncate">
-                    Você — {participantName}
+                  <span className="max-w-[180px] truncate">
+                    Você —{" "}
+                    {participantName ||
+                      "..."}
                   </span>
                 </div>
 
@@ -2340,15 +2819,18 @@ export default function MeetingRoom({
                 </div>
               </div>
 
-              {/* ================================================= */}
-              {/* VÍDEO REMOTO */}
-              {/* ================================================= */}
-
-              <div className={videoTileClasses}>
+              {/* REMOTO */}
+              <div
+                className={
+                  videoTileClasses
+                }
+              >
                 {remoteParticipantId ? (
                   <>
                     <video
-                      ref={remoteVideoRef}
+                      ref={
+                        remoteVideoRef
+                      }
                       autoPlay
                       playsInline
                       className={`h-full w-full object-cover ${
@@ -2376,7 +2858,9 @@ export default function MeetingRoom({
                           </div>
 
                           <p className="mt-3 text-sm font-semibold">
-                            {remoteParticipantName}
+                            {
+                              remoteParticipantName
+                            }
                           </p>
 
                           <p className="mt-1 text-xs text-zinc-500">
@@ -2388,9 +2872,9 @@ export default function MeetingRoom({
                     <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" />
 
                     <div className="absolute bottom-3 left-3 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs font-medium backdrop-blur-xl sm:text-sm">
-                      <span className="max-w-[180px] truncate">
-                        {remoteParticipantName}
-                      </span>
+                      {
+                        remoteParticipantName
+                      }
                     </div>
 
                     <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
@@ -2429,7 +2913,9 @@ export default function MeetingRoom({
 
                     <button
                       type="button"
-                      onClick={copyInviteLink}
+                      onClick={
+                        copyInviteLink
+                      }
                       className="mt-4 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-2.5 text-xs font-semibold text-blue-200 backdrop-blur-xl transition hover:bg-blue-500/20"
                     >
                       🔗 Copiar convite
@@ -2445,16 +2931,15 @@ export default function MeetingRoom({
               </div>
             )}
 
-            {/* ================================================= */}
-            {/* CONTROLES GLASS */}
-            {/* ================================================= */}
-
+            {/* CONTROLES */}
             <section
               className={`sticky bottom-3 z-30 mt-4 grid grid-cols-4 gap-2 rounded-[1.7rem] p-2.5 sm:static sm:flex sm:flex-wrap sm:justify-center sm:p-3 ${glassPanel}`}
             >
               <button
                 type="button"
-                onClick={toggleMicrophone}
+                onClick={
+                  toggleMicrophone
+                }
                 className={`${controlButton} ${
                   isMicOn
                     ? "border-emerald-400/15 bg-emerald-400/10 text-emerald-200"
@@ -2462,19 +2947,21 @@ export default function MeetingRoom({
                 }`}
               >
                 <span className="text-lg">
-                  {isMicOn ? "🎤" : "🔇"}
+                  {isMicOn
+                    ? "🎤"
+                    : "🔇"}
                 </span>
 
                 <span className="hidden sm:inline">
-                  {isMicOn
-                    ? "Microfone"
-                    : "Mudo"}
+                  Microfone
                 </span>
               </button>
 
               <button
                 type="button"
-                onClick={toggleCamera}
+                onClick={
+                  toggleCamera
+                }
                 className={`${controlButton} ${
                   isCameraOn
                     ? "border-emerald-400/15 bg-emerald-400/10 text-emerald-200"
@@ -2482,7 +2969,9 @@ export default function MeetingRoom({
                 }`}
               >
                 <span className="text-lg">
-                  {isCameraOn ? "📹" : "🚫"}
+                  {isCameraOn
+                    ? "📹"
+                    : "🚫"}
                 </span>
 
                 <span className="hidden sm:inline">
@@ -2506,9 +2995,7 @@ export default function MeetingRoom({
                 </span>
 
                 <span className="hidden sm:inline">
-                  {isScreenSharing
-                    ? "Parar tela"
-                    : "Compartilhar"}
+                  Compartilhar
                 </span>
               </button>
 
@@ -2531,17 +3018,20 @@ export default function MeetingRoom({
               <button
                 type="button"
                 onClick={() => {
-                  setIsChatOpen((current) => {
-                    const next = !current;
+                  setIsChatOpen(
+                    (current) => {
+                      const next =
+                        !current;
 
-                    if (next) {
-                      setIsTranscriptOpen(
-                        false
-                      );
+                      if (next) {
+                        setIsTranscriptOpen(
+                          false
+                        );
+                      }
+
+                      return next;
                     }
-
-                    return next;
-                  });
+                  );
                 }}
                 className={`${controlButton} ${
                   isChatOpen
@@ -2565,7 +3055,9 @@ export default function MeetingRoom({
                   false
                 }
                 onClick={() => {
-                  if (isTranscribing) {
+                  if (
+                    isTranscribing
+                  ) {
                     stopTranscription();
                   } else {
                     startTranscription();
@@ -2600,7 +3092,9 @@ export default function MeetingRoom({
                         !current
                     );
 
-                    setIsChatOpen(false);
+                    setIsChatOpen(
+                      false
+                    );
                   }}
                   className={`${controlButton} border-cyan-400/15 bg-cyan-500/10 text-cyan-200`}
                 >
@@ -2613,14 +3107,18 @@ export default function MeetingRoom({
                   </span>
 
                   <span className="rounded-full bg-white/10 px-1.5 text-[10px]">
-                    {transcriptEntries.length}
+                    {
+                      transcriptEntries.length
+                    }
                   </span>
                 </button>
               )}
 
               <button
                 type="button"
-                onClick={leaveMeeting}
+                onClick={
+                  leaveMeeting
+                }
                 className={`${controlButton} border-red-400/20 bg-red-500/20 text-red-100 hover:bg-red-500/30`}
               >
                 <span className="text-lg">
@@ -2634,10 +3132,7 @@ export default function MeetingRoom({
             </section>
           </div>
 
-          {/* ================================================= */}
-          {/* CHAT - BOTTOM SHEET NO CELULAR */}
-          {/* ================================================= */}
-
+          {/* CHAT */}
           {isChatOpen && (
             <aside
               className={`fixed inset-x-3 bottom-24 z-40 flex max-h-[62dvh] min-h-[380px] flex-col overflow-hidden rounded-[1.8rem] xl:static xl:inset-auto xl:max-h-[720px] xl:min-h-[550px] ${glassPanel}`}
@@ -2649,14 +3144,19 @@ export default function MeetingRoom({
                   </h2>
 
                   <p className="mt-0.5 text-xs text-zinc-500">
-                    {messages.length} mensagens
+                    {
+                      messages.length
+                    }{" "}
+                    mensagens
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() =>
-                    setIsChatOpen(false)
+                    setIsChatOpen(
+                      false
+                    )
                   }
                   className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-zinc-300 backdrop-blur-xl"
                 >
@@ -2665,10 +3165,13 @@ export default function MeetingRoom({
               </div>
 
               <div
-                ref={chatScrollRef}
+                ref={
+                  chatScrollRef
+                }
                 className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-4"
               >
-                {messages.length === 0 ? (
+                {messages.length ===
+                0 ? (
                   <div className="flex flex-1 flex-col items-center justify-center text-center">
                     <div className="text-3xl">
                       💭
@@ -2679,46 +3182,63 @@ export default function MeetingRoom({
                     </p>
                   </div>
                 ) : (
-                  messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`max-w-[88%] rounded-2xl border px-4 py-3 backdrop-blur-xl ${
-                        message.isOwn
-                          ? "ml-auto border-blue-300/15 bg-blue-500/20"
-                          : "mr-auto border-white/10 bg-white/5"
-                      }`}
-                    >
-                      <div className="mb-1.5 flex justify-between gap-4 text-[11px]">
-                        <strong className="truncate">
-                          {message.isOwn
-                            ? "Você"
-                            : message.senderName}
-                        </strong>
+                  messages.map(
+                    (
+                      message
+                    ) => (
+                      <div
+                        key={
+                          message.id
+                        }
+                        className={`max-w-[88%] rounded-2xl border px-4 py-3 backdrop-blur-xl ${
+                          message.isOwn
+                            ? "ml-auto border-blue-300/15 bg-blue-500/20"
+                            : "mr-auto border-white/10 bg-white/5"
+                        }`}
+                      >
+                        <div className="mb-1.5 flex justify-between gap-4 text-[11px]">
+                          <strong className="truncate">
+                            {message.isOwn
+                              ? `Você — ${participantName}`
+                              : message.senderName}
+                          </strong>
 
-                        <span className="shrink-0 text-zinc-500">
-                          {message.time}
-                        </span>
+                          <span className="shrink-0 text-zinc-500">
+                            {
+                              message.time
+                            }
+                          </span>
+                        </div>
+
+                        <p className="break-words text-sm leading-relaxed text-zinc-100">
+                          {
+                            message.text
+                          }
+                        </p>
                       </div>
-
-                      <p className="break-words text-sm leading-relaxed text-zinc-100">
-                        {message.text}
-                      </p>
-                    </div>
-                  ))
+                    )
+                  )
                 )}
               </div>
 
               <form
-                onSubmit={sendMessage}
+                onSubmit={
+                  sendMessage
+                }
                 className="border-t border-white/10 bg-black/10 p-3 backdrop-blur-xl"
               >
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={newMessage}
-                    onChange={(event) =>
+                    value={
+                      newMessage
+                    }
+                    onChange={(
+                      event
+                    ) =>
                       setNewMessage(
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     placeholder="Mensagem..."
@@ -2728,7 +3248,9 @@ export default function MeetingRoom({
 
                   <button
                     type="submit"
-                    disabled={!newMessage.trim()}
+                    disabled={
+                      !newMessage.trim()
+                    }
                     className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-blue-300/20 bg-blue-500/20 text-lg shadow-lg transition active:scale-95 disabled:opacity-30"
                   >
                     ➤
@@ -2738,10 +3260,7 @@ export default function MeetingRoom({
             </aside>
           )}
 
-          {/* ================================================= */}
-          {/* TRANSCRIÇÃO - BOTTOM SHEET NO CELULAR */}
-          {/* ================================================= */}
-
+          {/* TRANSCRIÇÃO */}
           {isTranscriptOpen && (
             <aside
               className={`fixed inset-x-3 bottom-24 z-40 flex max-h-[65dvh] min-h-[410px] flex-col overflow-hidden rounded-[1.8rem] xl:static xl:inset-auto xl:max-h-[720px] xl:min-h-[550px] ${glassPanel}`}
@@ -2758,7 +3277,10 @@ export default function MeetingRoom({
                     </h2>
 
                     <p className="text-xs text-zinc-500">
-                      {transcriptEntries.length} falas
+                      {
+                        transcriptEntries.length
+                      }{" "}
+                      falas
                     </p>
                   </div>
                 </div>
@@ -2777,7 +3299,9 @@ export default function MeetingRoom({
               </div>
 
               <div
-                ref={transcriptScrollRef}
+                ref={
+                  transcriptScrollRef
+                }
                 className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3 sm:p-4"
               >
                 {transcriptEntries.length ===
@@ -2791,16 +3315,16 @@ export default function MeetingRoom({
                     <p className="mt-3 text-sm font-medium text-zinc-300">
                       Aguardando sua fala
                     </p>
-
-                    <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                      A transcrição aparecerá aqui sem mover a tela da reunião.
-                    </p>
                   </div>
                 ) : (
                   transcriptEntries.map(
-                    (entry) => (
+                    (
+                      entry
+                    ) => (
                       <div
-                        key={entry.id}
+                        key={
+                          entry.id
+                        }
                         className="rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 shadow-lg backdrop-blur-xl"
                       >
                         <div className="mb-2 flex items-center justify-between gap-2">
@@ -2817,12 +3341,16 @@ export default function MeetingRoom({
                           </strong>
 
                           <span className="shrink-0 text-[10px] text-zinc-600">
-                            {entry.time}
+                            {
+                              entry.time
+                            }
                           </span>
                         </div>
 
                         <p className="text-sm leading-relaxed text-zinc-200">
-                          {entry.text}
+                          {
+                            entry.text
+                          }
                         </p>
                       </div>
                     )
@@ -2844,7 +3372,9 @@ export default function MeetingRoom({
                     </div>
 
                     <p className="text-sm italic leading-relaxed text-zinc-400">
-                      {interimTranscript}
+                      {
+                        interimTranscript
+                      }
                     </p>
                   </div>
                 )}
