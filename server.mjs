@@ -16,7 +16,7 @@ const handle = app.getRequestHandler();
 
 await app.prepare();
 
-const MAX_PARTICIPANTS = 2;
+const MAX_PARTICIPANTS = 6;
 const MAX_REPORT_TRANSCRIPT_CHARS = 380000;
 
 const defaultMediaStatus = {

@@ -137,6 +137,8 @@ const FALLBACK_PARTICIPANT_KEY =
 const PARTICIPANT_SESSION_KEY =
   "connectai-participant-session";
 
+const MAX_ROOM_PARTICIPANTS = 6;
+
 const DEFAULT_MEDIA_STATUS: MediaStatus = {
   isMicOn: true,
   isCameraOn: true,
@@ -976,10 +978,21 @@ export default function MeetingRoom({
       null
     );
 
-  const remoteVideoRef =
-    useRef<HTMLVideoElement>(
-      null
-    );
+  const remoteVideoRefs =
+    useRef<
+      Map<
+        string,
+        HTMLVideoElement
+      >
+    >(new Map());
+
+  const remoteVideoRefCallbacks =
+    useRef<
+      Map<
+        string,
+        (element: HTMLVideoElement | null) => void
+      >
+    >(new Map());
 
   const mediaStreamRef =
     useRef<MediaStream | null>(
@@ -996,15 +1009,26 @@ export default function MeetingRoom({
       null
     );
 
-  const peerConnectionRef =
-    useRef<RTCPeerConnection | null>(
-      null
-    );
+  const peerConnectionsRef =
+    useRef<
+      Map<
+        string,
+        RTCPeerConnection
+      >
+    >(new Map());
 
   const pendingIceCandidatesRef =
     useRef<
-      RTCIceCandidateInit[]
-    >([]);
+      Map<
+        string,
+        RTCIceCandidateInit[]
+      >
+    >(new Map());
+
+  const remoteStreamsRef =
+    useRef<
+      Map<string, MediaStream>
+    >(new Map());
 
   const localMediaStatusRef =
     useRef<MediaStatus>({
@@ -1012,9 +1036,9 @@ export default function MeetingRoom({
     });
 
   const remoteMediaStatusRef =
-    useRef<MediaStatus>({
-      ...DEFAULT_MEDIA_STATUS,
-    });
+    useRef<
+      Map<string, MediaStatus>
+    >(new Map());
 
   const participantNameRef =
     useRef("");
@@ -1091,11 +1115,18 @@ export default function MeetingRoom({
   ] = useState("");
 
   const [
-    remoteParticipantName,
-    setRemoteParticipantName,
-  ] = useState(
-    "Participante"
-  );
+    remoteParticipants,
+    setRemoteParticipants,
+  ] = useState<
+    RoomParticipant[]
+  >([]);
+
+  const [
+    remoteConnectionStates,
+    setRemoteConnectionStates,
+  ] = useState<
+    Record<string, boolean>
+  >({});
 
   const [
     meetingSeconds,
@@ -1133,25 +1164,6 @@ export default function MeetingRoom({
   ] = useState(1);
 
   const [
-    remoteParticipantId,
-    setRemoteParticipantId,
-  ] = useState<
-    string | null
-  >(null);
-
-  const [
-    isRemoteConnected,
-    setIsRemoteConnected,
-  ] = useState(false);
-
-  const [
-    remoteMediaStatus,
-    setRemoteMediaStatus,
-  ] = useState<MediaStatus>({
-    ...DEFAULT_MEDIA_STATUS,
-  });
-
-  const [
     roomFull,
     setRoomFull,
   ] = useState(false);
@@ -1183,11 +1195,6 @@ export default function MeetingRoom({
   const [
     isTranscribing,
     setIsTranscribing,
-  ] = useState(false);
-
-  const [
-    isRemoteTranscribing,
-    setIsRemoteTranscribing,
   ] = useState(false);
 
   const [
@@ -1570,54 +1577,190 @@ export default function MeetingRoom({
     );
   }
 
-  function clearRemoteParticipant() {
-    peerConnectionRef.current?.close();
-
-    peerConnectionRef.current =
-      null;
-
-    pendingIceCandidatesRef.current =
-      [];
-
-    setRemoteParticipantId(
-      null
+  function upsertRemoteParticipant(
+    participant: RoomParticipant
+  ) {
+    remoteMediaStatusRef.current.set(
+      participant.participantId,
+      participant.mediaStatus
     );
 
-    setRemoteParticipantName(
-      "Participante"
+    setRemoteParticipants(
+      (current) => {
+        const existingIndex =
+          current.findIndex(
+            (item) =>
+              item.participantId ===
+              participant.participantId
+          );
+
+        if (existingIndex === -1) {
+          return [
+            ...current,
+            participant,
+          ];
+        }
+
+        const next = [...current];
+
+        next[existingIndex] = {
+          ...next[existingIndex],
+          ...participant,
+        };
+
+        return next;
+      }
+    );
+  }
+
+  function clearRemoteParticipant(
+    participantId: string
+  ) {
+    const peerConnection =
+      peerConnectionsRef.current.get(
+        participantId
+      );
+
+    peerConnection?.close();
+
+    peerConnectionsRef.current.delete(
+      participantId
     );
 
-    setIsRemoteTranscribing(
-      false
+    pendingIceCandidatesRef.current.delete(
+      participantId
     );
 
-    const defaultStatus = {
-      ...DEFAULT_MEDIA_STATUS,
-    };
-
-    remoteMediaStatusRef.current =
-      defaultStatus;
-
-    setRemoteMediaStatus(
-      defaultStatus
+    remoteMediaStatusRef.current.delete(
+      participantId
     );
 
-    setIsRemoteConnected(
-      false
+    const remoteStream =
+      remoteStreamsRef.current.get(
+        participantId
+      );
+
+    remoteStream
+      ?.getTracks()
+      .forEach((track) => {
+        track.stop();
+      });
+
+    remoteStreamsRef.current.delete(
+      participantId
     );
 
-    if (
-      remoteVideoRef.current
-    ) {
-      remoteVideoRef.current.srcObject =
-        null;
+    const videoElement =
+      remoteVideoRefs.current.get(
+        participantId
+      );
+
+    if (videoElement) {
+      videoElement.srcObject = null;
+    }
+
+    remoteVideoRefs.current.delete(
+      participantId
+    );
+
+    remoteVideoRefCallbacks.current.delete(
+      participantId
+    );
+
+    setRemoteParticipants(
+      (current) =>
+        current.filter(
+          (participant) =>
+            participant.participantId !==
+            participantId
+        )
+    );
+
+    setRemoteConnectionStates(
+      (current) => {
+        const next = {
+          ...current,
+        };
+
+        delete next[participantId];
+        return next;
+      }
+    );
+  }
+
+  function closeAllPeerConnections() {
+    peerConnectionsRef.current.forEach(
+      (peerConnection) => {
+        peerConnection.close();
+      }
+    );
+
+    peerConnectionsRef.current.clear();
+    pendingIceCandidatesRef.current.clear();
+
+    remoteStreamsRef.current.forEach(
+      (stream) => {
+        stream
+          .getTracks()
+          .forEach((track) => {
+            track.stop();
+          });
+      }
+    );
+
+    remoteStreamsRef.current.clear();
+    remoteVideoRefs.current.clear();
+    remoteVideoRefCallbacks.current.clear();
+    remoteMediaStatusRef.current.clear();
+  }
+
+  async function configureVideoSender(
+    sender: RTCRtpSender,
+    maxBitrate: number
+  ) {
+    try {
+      const parameters =
+        sender.getParameters();
+
+      if (
+        !parameters.encodings ||
+        parameters.encodings.length === 0
+      ) {
+        parameters.encodings = [{}];
+      }
+
+      parameters.encodings[0].maxBitrate =
+        maxBitrate;
+
+      parameters.encodings[0].maxFramerate =
+        24;
+
+      await sender.setParameters(
+        parameters
+      );
+    } catch (error) {
+      console.warn(
+        "Não foi possível limitar o bitrate do vídeo:",
+        error
+      );
     }
   }
 
   function createPeerConnection(
     targetId: string
   ) {
-    peerConnectionRef.current?.close();
+    const existingPeer =
+      peerConnectionsRef.current.get(
+        targetId
+      );
+
+    if (
+      existingPeer &&
+      existingPeer.connectionState !==
+        "closed"
+    ) {
+      return existingPeer;
+    }
 
     const peerConnection =
       new RTCPeerConnection({
@@ -1629,8 +1772,10 @@ export default function MeetingRoom({
         ],
       });
 
-    peerConnectionRef.current =
-      peerConnection;
+    peerConnectionsRef.current.set(
+      targetId,
+      peerConnection
+    );
 
     const cameraStream =
       mediaStreamRef.current;
@@ -1663,27 +1808,68 @@ export default function MeetingRoom({
       activeVideoTrack &&
       activeVideoStream
     ) {
-      peerConnection.addTrack(
-        activeVideoTrack,
-        activeVideoStream
+      const videoSender =
+        peerConnection.addTrack(
+          activeVideoTrack,
+          activeVideoStream
+        );
+
+      void configureVideoSender(
+        videoSender,
+        screenStream
+          ? 1_500_000
+          : 600_000
       );
     }
 
     peerConnection.ontrack =
       (event) => {
-        const remoteStream =
+        let remoteStream =
           event.streams[0];
 
-        if (
-          remoteVideoRef.current &&
+        if (!remoteStream) {
+          remoteStream =
+            remoteStreamsRef.current.get(
+              targetId
+            ) ??
+            new MediaStream();
+
+          const alreadyHasTrack =
+            remoteStream
+              .getTracks()
+              .some(
+                (track) =>
+                  track.id ===
+                  event.track.id
+              );
+
+          if (!alreadyHasTrack) {
+            remoteStream.addTrack(
+              event.track
+            );
+          }
+        }
+
+        remoteStreamsRef.current.set(
+          targetId,
           remoteStream
-        ) {
-          remoteVideoRef.current.srcObject =
+        );
+
+        const videoElement =
+          remoteVideoRefs.current.get(
+            targetId
+          );
+
+        if (videoElement) {
+          videoElement.srcObject =
             remoteStream;
         }
 
-        setIsRemoteConnected(
-          true
+        setRemoteConnectionStates(
+          (current) => ({
+            ...current,
+            [targetId]: true,
+          })
         );
       };
 
@@ -1712,26 +1898,31 @@ export default function MeetingRoom({
         const state =
           peerConnection.connectionState;
 
-        if (
-          state ===
-          "connected"
-        ) {
-          setIsRemoteConnected(
-            true
-          );
-        }
+        setRemoteConnectionStates(
+          (current) => ({
+            ...current,
+            [targetId]:
+              state === "connected",
+          })
+        );
 
         if (
-          state ===
-            "failed" ||
-          state ===
-            "closed" ||
-          state ===
-            "disconnected"
+          state === "failed" ||
+          state === "closed"
         ) {
-          setIsRemoteConnected(
-            false
-          );
+          const currentPeer =
+            peerConnectionsRef.current.get(
+              targetId
+            );
+
+          if (
+            currentPeer ===
+            peerConnection
+          ) {
+            peerConnectionsRef.current.delete(
+              targetId
+            );
+          }
         }
       };
 
@@ -1739,13 +1930,16 @@ export default function MeetingRoom({
   }
 
   async function flushPendingIceCandidates(
+    participantId: string,
     peerConnection:
       RTCPeerConnection
   ) {
-    for (
-      const candidate
-      of pendingIceCandidatesRef.current
-    ) {
+    const candidates =
+      pendingIceCandidatesRef.current.get(
+        participantId
+      ) ?? [];
+
+    for (const candidate of candidates) {
       try {
         await peerConnection.addIceCandidate(
           candidate
@@ -1758,45 +1952,135 @@ export default function MeetingRoom({
       }
     }
 
-    pendingIceCandidatesRef.current =
-      [];
+    pendingIceCandidatesRef.current.delete(
+      participantId
+    );
   }
 
   async function replaceOutgoingVideoTrack(
     newTrack:
-      MediaStreamTrack
+      MediaStreamTrack,
+    maxBitrate = 600_000
   ) {
-    const peerConnection =
-      peerConnectionRef.current;
+    const peerConnections =
+      Array.from(
+        peerConnectionsRef.current.values()
+      );
 
-    if (!peerConnection) {
-      return;
-    }
+    await Promise.all(
+      peerConnections.map(
+        async (peerConnection) => {
+          const videoSender =
+            peerConnection
+              .getSenders()
+              .find(
+                (sender) =>
+                  sender.track?.kind ===
+                  "video"
+              );
 
-    const videoSender =
-      peerConnection
-        .getSenders()
-        .find(
-          (sender) =>
-            sender.track?.kind ===
-            "video"
+          if (!videoSender) {
+            return;
+          }
+
+          try {
+            await videoSender.replaceTrack(
+              newTrack
+            );
+
+            await configureVideoSender(
+              videoSender,
+              maxBitrate
+            );
+          } catch (error) {
+            console.error(
+              "Erro ao trocar vídeo:",
+              error
+            );
+          }
+        }
+      )
+    );
+  }
+
+  const attachLocalVideo =
+    useCallback(
+      (
+        element: HTMLVideoElement | null
+      ) => {
+        localVideoRef.current =
+          element;
+
+        if (!element) {
+          return;
+        }
+
+        const activeStream =
+          screenStreamRef.current ??
+          mediaStreamRef.current;
+
+        if (
+          element.srcObject !==
+          activeStream
+        ) {
+          element.srcObject =
+            activeStream;
+        }
+      },
+      []
+    );
+
+  const getRemoteVideoRef =
+    useCallback(
+      (participantId: string) => {
+        const existingCallback =
+          remoteVideoRefCallbacks.current.get(
+            participantId
+          );
+
+        if (existingCallback) {
+          return existingCallback;
+        }
+
+        const callback = (
+          element: HTMLVideoElement | null
+        ) => {
+          if (!element) {
+            remoteVideoRefs.current.delete(
+              participantId
+            );
+            return;
+          }
+
+          remoteVideoRefs.current.set(
+            participantId,
+            element
+          );
+
+          const remoteStream =
+            remoteStreamsRef.current.get(
+              participantId
+            );
+
+          if (
+            remoteStream &&
+            element.srcObject !==
+              remoteStream
+          ) {
+            element.srcObject =
+              remoteStream;
+          }
+        };
+
+        remoteVideoRefCallbacks.current.set(
+          participantId,
+          callback
         );
 
-    if (!videoSender) {
-      return;
-    }
-
-    try {
-      await videoSender.replaceTrack(
-        newTrack
-      );
-    } catch (error) {
-      console.error(
-        "Erro ao trocar vídeo:",
-        error
-      );
-    }
-  }
+        return callback;
+      },
+      []
+    );
 
   async function startScreenSharing() {
     try {
@@ -1820,7 +2104,8 @@ export default function MeetingRoom({
         screenStream;
 
       await replaceOutgoingVideoTrack(
-        screenTrack
+        screenTrack,
+        1_500_000
       );
 
       if (
@@ -1861,7 +2146,8 @@ export default function MeetingRoom({
 
     if (cameraTrack) {
       await replaceOutgoingVideoTrack(
-        cameraTrack
+        cameraTrack,
+        600_000
       );
     }
 
@@ -2581,12 +2867,19 @@ export default function MeetingRoom({
               video: {
                 width: {
                   ideal:
-                    1280,
+                    640,
                 },
 
                 height: {
                   ideal:
-                    720,
+                    360,
+                },
+
+                frameRate: {
+                  ideal:
+                    24,
+                  max:
+                    24,
                 },
 
                 aspectRatio: {
@@ -2782,7 +3075,7 @@ export default function MeetingRoom({
             participants.find(
               (participant) =>
                 participant.participantId ===
-                socket.id
+                  socket.id
             );
 
           if (
@@ -2800,43 +3093,25 @@ export default function MeetingRoom({
             );
           }
 
-          const remoteParticipant =
-            participants.find(
+          const nextRemoteParticipants =
+            participants.filter(
               (participant) =>
                 participant.participantId !==
-                socket.id
+                  socket.id
             );
 
-          if (
-            remoteParticipant
-          ) {
-            setRemoteParticipantId(
-              remoteParticipant.participantId
-            );
+          nextRemoteParticipants.forEach(
+            (participant) => {
+              remoteMediaStatusRef.current.set(
+                participant.participantId,
+                participant.mediaStatus
+              );
+            }
+          );
 
-            setRemoteParticipantName(
-              remoteParticipant.participantName
-            );
-
-            remoteMediaStatusRef.current =
-              remoteParticipant.mediaStatus;
-
-            setRemoteMediaStatus(
-              remoteParticipant.mediaStatus
-            );
-
-            setIsRemoteTranscribing(
-              remoteParticipant.isTranscribing
-            );
-          } else {
-            setRemoteParticipantName(
-              "Participante"
-            );
-
-            setIsRemoteTranscribing(
-              false
-            );
-          }
+          setRemoteParticipants(
+            nextRemoteParticipants
+          );
         }
       );
 
@@ -2942,93 +3217,55 @@ export default function MeetingRoom({
             return;
           }
 
-          const participant =
-            participants[0];
-
-          setRemoteParticipantId(
-            participant.participantId
-          );
-
-          setRemoteParticipantName(
-            participant.participantName
-          );
-
-          setIsRemoteTranscribing(
-            participant.isTranscribing
-          );
-
-          remoteMediaStatusRef.current =
-            participant.mediaStatus;
-
-          setRemoteMediaStatus(
-            participant.mediaStatus
-          );
-
-          const peerConnection =
-            createPeerConnection(
-              participant.participantId
+          for (
+            const participant
+            of participants
+          ) {
+            upsertRemoteParticipant(
+              participant
             );
 
-          try {
-            const offer =
-              await peerConnection.createOffer();
+            const peerConnection =
+              createPeerConnection(
+                participant.participantId
+              );
 
-            await peerConnection.setLocalDescription(
-              offer
-            );
+            try {
+              const offer =
+                await peerConnection.createOffer();
 
-            socket.emit(
-              "webrtc-offer",
-              {
-                targetId:
-                  participant.participantId,
+              await peerConnection.setLocalDescription(
+                offer
+              );
 
-                offer,
-              }
-            );
-          } catch (error) {
-            console.error(
-              "Erro ao criar oferta:",
-              error
-            );
+              socket.emit(
+                "webrtc-offer",
+                {
+                  targetId:
+                    participant.participantId,
+
+                  offer,
+                }
+              );
+            } catch (error) {
+              console.error(
+                `Erro ao criar oferta para ${participant.participantName}:`,
+                error
+              );
+            }
           }
         }
       );
 
       socket.on(
         "participant-joined",
-        ({
-          participantId,
-
-          participantName:
-            joinedName,
-
-          mediaStatus,
-
-          isTranscribing:
-            joinedIsTranscribing,
-        }: RoomParticipant) => {
-          setRemoteParticipantId(
-            participantId
-          );
-
-          setRemoteParticipantName(
-            joinedName
-          );
-
-          setIsRemoteTranscribing(
-            joinedIsTranscribing
-          );
-
-          remoteMediaStatusRef.current =
-            mediaStatus;
-
-          setRemoteMediaStatus(
-            mediaStatus
+        (participant: RoomParticipant) => {
+          upsertRemoteParticipant(
+            participant
           );
 
           addNotification(
-            `${joinedName} entrou na reunião.`,
+            `${participant.participantName} entrou na reunião.`,
             "success"
           );
         }
@@ -3037,6 +3274,8 @@ export default function MeetingRoom({
       socket.on(
         "participant-transcription-status",
         ({
+          participantId,
+
           participantName:
             changedName,
 
@@ -3052,8 +3291,19 @@ export default function MeetingRoom({
           isTranscribing:
             boolean;
         }) => {
-          setIsRemoteTranscribing(
-            remoteIsTranscribing
+          setRemoteParticipants(
+            (current) =>
+              current.map(
+                (participant) =>
+                  participant.participantId ===
+                  participantId
+                    ? {
+                        ...participant,
+                        isTranscribing:
+                          remoteIsTranscribing,
+                      }
+                    : participant
+              )
           );
 
           addNotification(
@@ -3068,6 +3318,8 @@ export default function MeetingRoom({
       socket.on(
         "participant-media-status",
         ({
+          participantId,
+
           participantName:
             changedName,
 
@@ -3083,7 +3335,11 @@ export default function MeetingRoom({
             MediaStatus;
         }) => {
           const previousStatus =
-            remoteMediaStatusRef.current;
+            remoteMediaStatusRef.current.get(
+              participantId
+            ) ?? {
+              ...DEFAULT_MEDIA_STATUS,
+            };
 
           const safeName =
             changedName ||
@@ -3149,11 +3405,26 @@ export default function MeetingRoom({
             );
           }
 
-          remoteMediaStatusRef.current =
-            mediaStatus;
-
-          setRemoteMediaStatus(
+          remoteMediaStatusRef.current.set(
+            participantId,
             mediaStatus
+          );
+
+          setRemoteParticipants(
+            (current) =>
+              current.map(
+                (participant) =>
+                  participant.participantId ===
+                  participantId
+                    ? {
+                        ...participant,
+                        participantName:
+                          changedName ||
+                          participant.participantName,
+                        mediaStatus,
+                      }
+                    : participant
+              )
           );
         }
       );
@@ -3176,13 +3447,46 @@ export default function MeetingRoom({
           offer:
             RTCSessionDescriptionInit;
         }) => {
-          setRemoteParticipantId(
-            senderId
-          );
+          setRemoteParticipants(
+            (current) => {
+              const exists =
+                current.some(
+                  (participant) =>
+                    participant.participantId ===
+                    senderId
+                );
 
-          setRemoteParticipantName(
-            senderName ||
-              "Participante"
+              if (exists) {
+                return current.map(
+                  (participant) =>
+                    participant.participantId ===
+                    senderId
+                      ? {
+                          ...participant,
+                          participantName:
+                            senderName ||
+                            participant.participantName,
+                        }
+                      : participant
+                );
+              }
+
+              return [
+                ...current,
+                {
+                  participantId:
+                    senderId,
+                  participantName:
+                    senderName ||
+                    "Participante",
+                  mediaStatus: {
+                    ...DEFAULT_MEDIA_STATUS,
+                  },
+                  isTranscribing:
+                    false,
+                },
+              ];
+            }
           );
 
           const peerConnection =
@@ -3196,6 +3500,7 @@ export default function MeetingRoom({
             );
 
             await flushPendingIceCandidates(
+              senderId,
               peerConnection
             );
 
@@ -3227,6 +3532,8 @@ export default function MeetingRoom({
       socket.on(
         "webrtc-answer",
         async ({
+          senderId,
+
           senderName,
 
           answer,
@@ -3240,16 +3547,27 @@ export default function MeetingRoom({
           answer:
             RTCSessionDescriptionInit;
         }) => {
-          if (
-            senderName
-          ) {
-            setRemoteParticipantName(
-              senderName
+          if (senderName) {
+            setRemoteParticipants(
+              (current) =>
+                current.map(
+                  (participant) =>
+                    participant.participantId ===
+                    senderId
+                      ? {
+                          ...participant,
+                          participantName:
+                            senderName,
+                        }
+                      : participant
+                )
             );
           }
 
           const peerConnection =
-            peerConnectionRef.current;
+            peerConnectionsRef.current.get(
+              senderId
+            );
 
           if (!peerConnection) {
             return;
@@ -3261,6 +3579,7 @@ export default function MeetingRoom({
             );
 
             await flushPendingIceCandidates(
+              senderId,
               peerConnection
             );
           } catch (error) {
@@ -3275,6 +3594,8 @@ export default function MeetingRoom({
       socket.on(
         "webrtc-ice-candidate",
         async ({
+          senderId,
+
           candidate,
         }: {
           senderId:
@@ -3284,14 +3605,26 @@ export default function MeetingRoom({
             RTCIceCandidateInit;
         }) => {
           const peerConnection =
-            peerConnectionRef.current;
+            peerConnectionsRef.current.get(
+              senderId
+            );
 
           if (
             !peerConnection ||
             !peerConnection.remoteDescription
           ) {
-            pendingIceCandidatesRef.current.push(
+            const pending =
+              pendingIceCandidatesRef.current.get(
+                senderId
+              ) ?? [];
+
+            pending.push(
               candidate
+            );
+
+            pendingIceCandidatesRef.current.set(
+              senderId,
+              pending
             );
 
             return;
@@ -3327,6 +3660,8 @@ export default function MeetingRoom({
       socket.on(
         "participant-left",
         ({
+          participantId,
+
           participantName:
             leftName,
         }: {
@@ -3341,7 +3676,9 @@ export default function MeetingRoom({
             "danger"
           );
 
-          clearRemoteParticipant();
+          clearRemoteParticipant(
+            participantId
+          );
         }
       );
 
@@ -3353,7 +3690,7 @@ export default function MeetingRoom({
           );
 
           addNotification(
-            "Esta sala já possui 2 participantes.",
+            "Esta sala já possui 6 participantes.",
             "warning"
           );
         }
@@ -3467,7 +3804,7 @@ export default function MeetingRoom({
           }
         );
 
-      peerConnectionRef.current?.close();
+      closeAllPeerConnections();
 
       socketRef.current?.disconnect();
 
@@ -3475,9 +3812,6 @@ export default function MeetingRoom({
         null;
 
       screenStreamRef.current =
-        null;
-
-      peerConnectionRef.current =
         null;
 
       socketRef.current =
@@ -3940,7 +4274,7 @@ export default function MeetingRoom({
         }
       );
 
-    peerConnectionRef.current?.close();
+    closeAllPeerConnections();
 
     socketRef.current?.disconnect();
 
@@ -3949,9 +4283,22 @@ export default function MeetingRoom({
     );
   }
 
-  const remoteVideoAvailable =
-    remoteMediaStatus.isCameraOn ||
-    remoteMediaStatus.isScreenSharing;
+  const isAnyRemoteTranscribing =
+    remoteParticipants.some(
+      (participant) =>
+        participant.isTranscribing
+    );
+
+  const totalVisibleParticipants =
+    remoteParticipants.length + 1;
+
+  const useOneToOneLayout =
+    remoteParticipants.length === 1;
+
+  const multiParticipantGridClass =
+    totalVisibleParticipants <= 4
+      ? "grid-cols-1 sm:grid-cols-2"
+      : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
 
   const sidePanelOpen =
     isChatOpen ||
@@ -4032,7 +4379,7 @@ export default function MeetingRoom({
                   {
                     participantCount
                   }
-                  /2
+                  /{MAX_ROOM_PARTICIPANTS}
                 </span>
 
                 <span className="rounded-full border border-emerald-400/10 bg-emerald-400/5 px-3 py-1.5 font-mono text-emerald-300">
@@ -4075,7 +4422,7 @@ export default function MeetingRoom({
         </header>
 
         {(isTranscribing ||
-          isRemoteTranscribing ||
+          isAnyRemoteTranscribing ||
           isAssemblyConnecting) && (
           <div className="mb-4 flex items-center gap-3 rounded-2xl border border-cyan-400/15 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100 backdrop-blur-xl">
             <span className="relative flex h-3 w-3 shrink-0">
@@ -4092,7 +4439,7 @@ export default function MeetingRoom({
 
         {roomFull && (
           <div className="mb-4 rounded-2xl border border-yellow-400/15 bg-yellow-500/10 p-4 text-yellow-100">
-            Esta sala já possui 2 participantes.
+            Esta sala já possui 6 participantes.
           </div>
         )}
 
@@ -4129,177 +4476,407 @@ export default function MeetingRoom({
               <div
                 className={
                   isFullscreenLayout
-                    ? "relative flex h-full w-full items-center justify-center bg-black"
-                    : "relative flex aspect-video min-h-[260px] w-full items-center justify-center bg-black sm:min-h-[420px] lg:min-h-[540px]"
+                    ? "relative h-full w-full bg-black"
+                    : "relative aspect-video min-h-[260px] w-full bg-black sm:min-h-[420px] lg:min-h-[540px]"
                 }
               >
-                {remoteParticipantId ? (
+                {remoteParticipants.length === 0 ? (
                   <>
-                    <video
-                      ref={
-                        remoteVideoRef
-                      }
-                      autoPlay
-                      playsInline
-                      className={`h-full w-full bg-black object-contain ${
-                        remoteVideoAvailable
-                          ? ""
-                          : "hidden"
-                      }`}
-                    />
-
-                    {!isRemoteConnected && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
-                        <div className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-cyan-300" />
-
-                        <span className="text-sm text-zinc-300">
-                          Conectando com{" "}
-                          {
-                            remoteParticipantName
-                          }
-                          ...
-                        </span>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center px-5 text-center">
+                      <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-5xl">
+                        👤
                       </div>
-                    )}
 
-                    {isRemoteConnected &&
-                      !remoteVideoAvailable && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
-                          <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-5xl">
-                            👤
-                          </div>
+                      <p className="mt-4 text-lg font-semibold">
+                        Aguardando participantes
+                      </p>
 
-                          <p className="mt-4 text-lg font-semibold">
-                            {
-                              remoteParticipantName
-                            }
-                          </p>
+                      <p className="mt-2 max-w-sm text-sm text-zinc-500">
+                        A sala suporta até {MAX_ROOM_PARTICIPANTS} pessoas. Compartilhe o convite para começar.
+                      </p>
 
-                          <p className="mt-1 text-sm text-zinc-500">
-                            Câmera desligada
-                          </p>
-                        </div>
-                      )}
-
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
-
-                    <div className="absolute bottom-3 left-3 z-20 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs backdrop-blur-xl sm:bottom-4 sm:left-4 sm:text-sm">
-                      {
-                        remoteParticipantName
-                      }
+                      <button
+                        type="button"
+                        onClick={
+                          copyInviteLink
+                        }
+                        className="mt-5 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-2 transition hover:bg-blue-500/20 active:scale-95"
+                      >
+                        🔗 Copiar convite
+                      </button>
                     </div>
 
-                    <div className="absolute left-3 top-3 z-20 flex flex-col items-start gap-2 sm:left-4 sm:top-4">
-                      {!remoteMediaStatus.isMicOn && (
-                        <span className="rounded-xl border border-yellow-300/10 bg-yellow-500/30 px-3 py-2 text-xs backdrop-blur-xl">
-                          🔇 Mudo
-                        </span>
-                      )}
+                    <div
+                      className={`absolute z-30 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl ${
+                        isFullscreenLayout
+                          ? "bottom-5 right-5 w-[24vw] min-w-[170px] max-w-[360px]"
+                          : "bottom-3 right-3 w-[30%] min-w-[120px] max-w-[280px] sm:bottom-5 sm:right-5 sm:w-[26%]"
+                      }`}
+                    >
+                      <div className="relative aspect-video w-full overflow-hidden bg-black">
+                        <video
+                          ref={
+                            attachLocalVideo
+                          }
+                          autoPlay
+                          playsInline
+                          muted
+                          className={`h-full w-full bg-black object-contain ${
+                            isCameraOn ||
+                            isScreenSharing
+                              ? ""
+                              : "hidden"
+                          }`}
+                        />
 
-                      {remoteMediaStatus.isScreenSharing && (
-                        <span className="rounded-xl border border-purple-300/10 bg-purple-500/30 px-3 py-2 text-xs backdrop-blur-xl">
-                          🖥 Compartilhando tela
-                        </span>
-                      )}
+                        {!isCameraOn &&
+                          !isScreenSharing && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                              <div className="text-3xl sm:text-4xl">
+                                👤
+                              </div>
 
-                      {isRemoteTranscribing && (
-                        <span className="rounded-xl border border-cyan-300/10 bg-cyan-500/30 px-3 py-2 text-xs backdrop-blur-xl">
-                          🎙️ Live
-                        </span>
-                      )}
+                              <p className="mt-2 hidden text-xs text-zinc-400 sm:block">
+                                Câmera desligada
+                              </p>
+                            </div>
+                          )}
+
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/80 to-transparent" />
+
+                        <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
+                          <span className="max-w-[75%] truncate rounded-lg bg-black/45 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
+                            Você{isHost ? " • Anfitrião" : ""}
+                          </span>
+
+                          {!isMicOn && (
+                            <span className="rounded-lg bg-yellow-500/40 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
+                              🔇
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : useOneToOneLayout ? (
+                  <>
+                    {remoteParticipants.map(
+                      (participant) => {
+                        const videoAvailable =
+                          participant.mediaStatus.isCameraOn ||
+                          participant.mediaStatus.isScreenSharing;
+
+                        const connected =
+                          remoteConnectionStates[
+                            participant.participantId
+                          ] === true;
+
+                        return (
+                          <div
+                            key={
+                              participant.participantId
+                            }
+                            className="absolute inset-0"
+                          >
+                            <video
+                              ref={
+                                getRemoteVideoRef(
+                                  participant.participantId
+                                )
+                              }
+                              autoPlay
+                              playsInline
+                              className={`h-full w-full bg-black object-contain ${
+                                videoAvailable
+                                  ? ""
+                                  : "hidden"
+                              }`}
+                            />
+
+                            {!connected && (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                                <div className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-cyan-300" />
+
+                                <span className="text-sm text-zinc-300">
+                                  Conectando com {participant.participantName}...
+                                </span>
+                              </div>
+                            )}
+
+                            {connected &&
+                              !videoAvailable && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                                  <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-5xl">
+                                    👤
+                                  </div>
+
+                                  <p className="mt-4 text-lg font-semibold">
+                                    {participant.participantName}
+                                  </p>
+
+                                  <p className="mt-1 text-sm text-zinc-500">
+                                    Câmera desligada
+                                  </p>
+                                </div>
+                              )}
+
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+
+                            <div className="absolute bottom-3 left-3 z-20 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs backdrop-blur-xl sm:bottom-4 sm:left-4 sm:text-sm">
+                              {participant.participantName}
+                              {participant.isHost
+                                ? " • Anfitrião"
+                                : ""}
+                            </div>
+
+                            <div className="absolute left-3 top-3 z-20 flex flex-col items-start gap-2 sm:left-4 sm:top-4">
+                              {!participant.mediaStatus.isMicOn && (
+                                <span className="rounded-xl border border-yellow-300/10 bg-yellow-500/30 px-3 py-2 text-xs backdrop-blur-xl">
+                                  🔇 Mudo
+                                </span>
+                              )}
+
+                              {participant.mediaStatus.isScreenSharing && (
+                                <span className="rounded-xl border border-purple-300/10 bg-purple-500/30 px-3 py-2 text-xs backdrop-blur-xl">
+                                  🖥 Compartilhando tela
+                                </span>
+                              )}
+
+                              {participant.isTranscribing && (
+                                <span className="rounded-xl border border-cyan-300/10 bg-cyan-500/30 px-3 py-2 text-xs backdrop-blur-xl">
+                                  🎙️ Live
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+
+                    <div
+                      className={`absolute z-30 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl ${
+                        isFullscreenLayout
+                          ? "bottom-5 right-5 w-[24vw] min-w-[170px] max-w-[360px]"
+                          : "bottom-3 right-3 w-[30%] min-w-[120px] max-w-[280px] sm:bottom-5 sm:right-5 sm:w-[26%]"
+                      }`}
+                    >
+                      <div className="relative aspect-video w-full overflow-hidden bg-black">
+                        <video
+                          ref={
+                            attachLocalVideo
+                          }
+                          autoPlay
+                          playsInline
+                          muted
+                          className={`h-full w-full bg-black object-contain ${
+                            isCameraOn ||
+                            isScreenSharing
+                              ? ""
+                              : "hidden"
+                          }`}
+                        />
+
+                        {!isCameraOn &&
+                          !isScreenSharing && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                              <div className="text-3xl sm:text-4xl">
+                                👤
+                              </div>
+
+                              <p className="mt-2 hidden text-xs text-zinc-400 sm:block">
+                                Câmera desligada
+                              </p>
+                            </div>
+                          )}
+
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/80 to-transparent" />
+
+                        <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
+                          <span className="max-w-[75%] truncate rounded-lg bg-black/45 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
+                            Você{isHost ? " • Anfitrião" : ""}
+                          </span>
+
+                          {!isMicOn && (
+                            <span className="rounded-lg bg-yellow-500/40 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
+                              🔇
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="absolute right-2 top-2 flex flex-col items-end gap-1">
+                          {isScreenSharing && (
+                            <span className="rounded-lg bg-purple-500/40 px-2 py-1 text-[10px] backdrop-blur-md">
+                              🖥
+                            </span>
+                          )}
+
+                          {isTranscribing && (
+                            <span className="rounded-lg bg-cyan-500/40 px-2 py-1 text-[10px] backdrop-blur-md">
+                              🎙️
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </>
                 ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center px-5 text-center">
-                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/5 text-5xl">
-                      👤
+                  <div
+                    className={`grid h-full w-full gap-2 overflow-y-auto p-2 sm:p-3 ${multiParticipantGridClass}`}
+                  >
+                    <div className="relative min-h-[180px] overflow-hidden rounded-2xl border border-white/10 bg-black sm:min-h-[220px]">
+                      <video
+                        ref={
+                          attachLocalVideo
+                        }
+                        autoPlay
+                        playsInline
+                        muted
+                        className={`h-full w-full bg-black object-contain ${
+                          isCameraOn ||
+                          isScreenSharing
+                            ? ""
+                            : "hidden"
+                        }`}
+                      />
+
+                      {!isCameraOn &&
+                        !isScreenSharing && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                            <div className="text-4xl">
+                              👤
+                            </div>
+
+                            <p className="mt-2 text-xs text-zinc-400">
+                              Câmera desligada
+                            </p>
+                          </div>
+                        )}
+
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent" />
+
+                      <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
+                        <span className="truncate rounded-lg bg-black/50 px-2 py-1 text-xs backdrop-blur-md">
+                          Você{isHost ? " • Anfitrião" : ""}
+                        </span>
+
+                        <div className="flex gap-1">
+                          {!isMicOn && (
+                            <span className="rounded-lg bg-yellow-500/40 px-2 py-1 text-xs">
+                              🔇
+                            </span>
+                          )}
+
+                          {isScreenSharing && (
+                            <span className="rounded-lg bg-purple-500/40 px-2 py-1 text-xs">
+                              🖥
+                            </span>
+                          )}
+
+                          {isTranscribing && (
+                            <span className="rounded-lg bg-cyan-500/40 px-2 py-1 text-xs">
+                              🎙️
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    <p className="mt-4 text-lg font-semibold">
-                      Aguardando participante
-                    </p>
+                    {remoteParticipants.map(
+                      (participant) => {
+                        const videoAvailable =
+                          participant.mediaStatus.isCameraOn ||
+                          participant.mediaStatus.isScreenSharing;
 
-                    <p className="mt-2 max-w-sm text-sm text-zinc-500">
-                      Assim que seu convidado entrar, ele aparecerá em destaque nesta tela.
-                    </p>
+                        const connected =
+                          remoteConnectionStates[
+                            participant.participantId
+                          ] === true;
 
-                    <button
-                      type="button"
-                      onClick={
-                        copyInviteLink
+                        return (
+                          <div
+                            key={
+                              participant.participantId
+                            }
+                            className="relative min-h-[180px] overflow-hidden rounded-2xl border border-white/10 bg-black sm:min-h-[220px]"
+                          >
+                            <video
+                              ref={
+                                getRemoteVideoRef(
+                                  participant.participantId
+                                )
+                              }
+                              autoPlay
+                              playsInline
+                              className={`h-full w-full bg-black object-contain ${
+                                videoAvailable
+                                  ? ""
+                                  : "hidden"
+                              }`}
+                            />
+
+                            {!connected && (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 px-4 text-center">
+                                <div className="mb-3 h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-cyan-300" />
+
+                                <span className="text-xs text-zinc-300">
+                                  Conectando com {participant.participantName}...
+                                </span>
+                              </div>
+                            )}
+
+                            {connected &&
+                              !videoAvailable && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
+                                  <div className="text-4xl">
+                                    👤
+                                  </div>
+
+                                  <p className="mt-2 max-w-[90%] truncate text-sm font-semibold">
+                                    {participant.participantName}
+                                  </p>
+
+                                  <p className="mt-1 text-xs text-zinc-500">
+                                    Câmera desligada
+                                  </p>
+                                </div>
+                              )}
+
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/80 to-transparent" />
+
+                            <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
+                              <span className="max-w-[72%] truncate rounded-lg bg-black/50 px-2 py-1 text-xs backdrop-blur-md">
+                                {participant.participantName}
+                                {participant.isHost
+                                  ? " • Anfitrião"
+                                  : ""}
+                              </span>
+
+                              <div className="flex gap-1">
+                                {!participant.mediaStatus.isMicOn && (
+                                  <span className="rounded-lg bg-yellow-500/40 px-2 py-1 text-xs">
+                                    🔇
+                                  </span>
+                                )}
+
+                                {participant.mediaStatus.isScreenSharing && (
+                                  <span className="rounded-lg bg-purple-500/40 px-2 py-1 text-xs">
+                                    🖥
+                                  </span>
+                                )}
+
+                                {participant.isTranscribing && (
+                                  <span className="rounded-lg bg-cyan-500/40 px-2 py-1 text-xs">
+                                    🎙️
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
                       }
-                      className="mt-5 rounded-xl border border-blue-400/20 bg-blue-500/10 px-4 py-2 transition hover:bg-blue-500/20 active:scale-95"
-                    >
-                      🔗 Copiar convite
-                    </button>
+                    )}
                   </div>
                 )}
-
-                <div
-                  className={`absolute z-30 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl ${
-                    isFullscreenLayout
-                      ? "bottom-5 right-5 w-[24vw] min-w-[170px] max-w-[360px]"
-                      : "bottom-3 right-3 w-[30%] min-w-[120px] max-w-[280px] sm:bottom-5 sm:right-5 sm:w-[26%]"
-                  }`}
-                >
-                  <div className="relative aspect-video w-full overflow-hidden bg-black">
-                    <video
-                      ref={
-                        localVideoRef
-                      }
-                      autoPlay
-                      playsInline
-                      muted
-                      className={`h-full w-full bg-black object-contain ${
-                        isCameraOn ||
-                        isScreenSharing
-                          ? ""
-                          : "hidden"
-                      }`}
-                    />
-
-                    {!isCameraOn &&
-                      !isScreenSharing && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
-                          <div className="text-3xl sm:text-4xl">
-                            👤
-                          </div>
-
-                          <p className="mt-2 hidden text-xs text-zinc-400 sm:block">
-                            Câmera desligada
-                          </p>
-                        </div>
-                      )}
-
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/80 to-transparent" />
-
-                    <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between gap-2">
-                      <span className="max-w-[75%] truncate rounded-lg bg-black/45 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
-                        Você
-                      </span>
-
-                      {!isMicOn && (
-                        <span className="rounded-lg bg-yellow-500/40 px-2 py-1 text-[10px] backdrop-blur-md sm:text-xs">
-                          🔇
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="absolute right-2 top-2 flex flex-col items-end gap-1">
-                      {isScreenSharing && (
-                        <span className="rounded-lg bg-purple-500/40 px-2 py-1 text-[10px] backdrop-blur-md">
-                          🖥
-                        </span>
-                      )}
-
-                      {isTranscribing && (
-                        <span className="rounded-lg bg-cyan-500/40 px-2 py-1 text-[10px] backdrop-blur-md">
-                          🎙️
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
               </div>
             </section>
 
