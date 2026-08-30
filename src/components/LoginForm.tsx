@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   FormEvent,
   useEffect,
@@ -130,6 +131,13 @@ export default function LoginForm() {
     setIsSubmitting,
   ] = useState(false);
 
+  const [
+    recoveryHref,
+    setRecoveryHref,
+  ] = useState(
+    "/recuperar-senha"
+  );
+
   useEffect(() => {
     const params =
       new URLSearchParams(
@@ -148,6 +156,32 @@ export default function LoginForm() {
       localStorage.setItem(
         AUTH_RETURN_TO_KEY,
         returnTo
+      );
+
+      setRecoveryHref(
+        `/recuperar-senha?next=${encodeURIComponent(
+          returnTo
+        )}`
+      );
+
+      return;
+    }
+
+    const stored =
+      localStorage.getItem(
+        AUTH_RETURN_TO_KEY
+      ) || "";
+
+    if (
+      stored &&
+      isSafeReturnPath(
+        stored
+      )
+    ) {
+      setRecoveryHref(
+        `/recuperar-senha?next=${encodeURIComponent(
+          stored
+        )}`
       );
     }
   }, []);
@@ -328,21 +362,34 @@ export default function LoginForm() {
         }
       />
 
-      <FormField
-        id="password"
-        label="Senha"
-        type="password"
-        placeholder="Digite sua senha"
-        value={password}
-        error={passwordError}
-        onChange={(
-          event
-        ) =>
-          setPassword(
-            event.target.value
-          )
-        }
-      />
+      <div className="space-y-2">
+        <FormField
+          id="password"
+          label="Senha"
+          type="password"
+          placeholder="Digite sua senha"
+          value={password}
+          error={passwordError}
+          onChange={(
+            event
+          ) =>
+            setPassword(
+              event.target.value
+            )
+          }
+        />
+
+        <div className="flex justify-end">
+          <Link
+            href={
+              recoveryHref
+            }
+            className="text-sm font-medium text-blue-400 transition hover:text-blue-300"
+          >
+            Esqueci minha senha
+          </Link>
+        </div>
+      </div>
 
       {generalError && (
         <div className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">

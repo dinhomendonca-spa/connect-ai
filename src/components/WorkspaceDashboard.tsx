@@ -37,6 +37,8 @@ type Meeting = {
   room_id: string;
   title: string;
   participants: unknown;
+  transcript: unknown;
+  report: unknown;
   started_at:
     | string
     | null;
@@ -295,7 +297,7 @@ export default function WorkspaceDashboard() {
                 "meetings"
               )
               .select(
-                "id, folder_id, host_id, room_id, title, participants, started_at, ended_at, duration_seconds, created_at"
+                "id, folder_id, host_id, room_id, title, participants, transcript, report, started_at, ended_at, duration_seconds, created_at"
               )
               .order(
                 "created_at",
@@ -735,12 +737,26 @@ export default function WorkspaceDashboard() {
   function renderMeeting(
     meeting: Meeting
   ) {
+    const hasReport =
+      Boolean(
+        meeting.report &&
+          typeof meeting.report ===
+            "object"
+      );
+
+    const transcriptCount =
+      Array.isArray(
+        meeting.transcript
+      )
+        ? meeting.transcript.length
+        : 0;
+
     return (
       <article
         key={
           meeting.id
         }
-        className="rounded-2xl border border-white/10 bg-black/20 p-4"
+        className="rounded-2xl border border-white/10 bg-black/20 p-4 transition hover:border-blue-400/25 hover:bg-white/[0.04]"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -760,11 +776,51 @@ export default function WorkspaceDashboard() {
                 meeting.duration_seconds
               )}
             </p>
+
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+              {transcriptCount >
+                0 && (
+                <span className="rounded-full border border-cyan-400/15 bg-cyan-500/10 px-2.5 py-1 text-cyan-200">
+                  📝{" "}
+                  {
+                    transcriptCount
+                  }{" "}
+                  falas
+                </span>
+              )}
+
+              {hasReport && (
+                <span className="rounded-full border border-amber-400/15 bg-amber-500/10 px-2.5 py-1 text-amber-200">
+                  ✨ Relatório disponível
+                </span>
+              )}
+
+              {!hasReport &&
+                transcriptCount >
+                  0 && (
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-zinc-400">
+                    Relatório não gerado
+                  </span>
+                )}
+            </div>
           </div>
 
-          <span className="rounded-full border border-emerald-400/15 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">
-            Salva
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-emerald-400/15 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-200">
+              Salva
+            </span>
+
+            <Link
+              href={`/reunioes/${encodeURIComponent(
+                meeting.id
+              )}`}
+              className="rounded-xl border border-blue-400/20 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/20"
+            >
+              {hasReport
+                ? "📊 Ver relatório"
+                : "📄 Abrir"}
+            </Link>
+          </div>
         </div>
       </article>
     );
@@ -1106,7 +1162,7 @@ export default function WorkspaceDashboard() {
           </h2>
 
           <p className="mt-1 text-sm text-zinc-500">
-            As reuniões aparecerão aqui quando conectarmos o salvamento automático.
+            Abra uma reunião para consultar o relatório e a transcrição que ficaram salvos.
           </p>
         </div>
 

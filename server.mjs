@@ -34,6 +34,8 @@ const roomHostSessions = new Map();
 const roomStartedAt = new Map();
 const roomReports = new Map();
 const roomReportPromises = new Map();
+const roomCaptionTranslations = new Map();
+const roomCaptionTranslationPromises = new Map();
 
 function parseCookies(cookieHeader = "") {
   const cookies = {};
@@ -323,6 +325,8 @@ function scheduleRoomCleanup(roomName) {
       roomStartedAt.delete(roomName);
       roomReports.delete(roomName);
       roomReportPromises.delete(roomName);
+      roomCaptionTranslations.delete(roomName);
+      roomCaptionTranslationPromises.delete(roomName);
     }
 
     roomCleanupTimers.delete(roomName);
@@ -396,6 +400,395 @@ function broadcastRoomState(roomName) {
       count: participants.length,
     }
   );
+}
+
+function getCaptionSubscribers(
+  roomName,
+  excludedSocketId = null
+) {
+  const room =
+    io.sockets.adapter.rooms.get(
+      roomName
+    );
+
+  if (!room) {
+    return [];
+  }
+
+  return Array.from(room)
+    .filter(
+      (socketId) =>
+        socketId !==
+          excludedSocketId
+    )
+    .map((socketId) =>
+      io.sockets.sockets.get(
+        socketId
+      )
+    )
+    .filter(
+      (participantSocket) =>
+        participantSocket &&
+        participantSocket.data
+          .captionEnabled ===
+          true
+    );
+}
+
+function hasCaptionDemand(
+  roomName,
+  excludedSocketId = null
+) {
+  return (
+    getCaptionSubscribers(
+      roomName,
+      excludedSocketId
+    ).length > 0
+  );
+}
+
+function broadcastCaptionDemandState(
+  roomName,
+  excludedSocketId = null
+) {
+  io.to(roomName).emit(
+    "caption-demand-state",
+    {
+      active:
+        hasCaptionDemand(
+          roomName,
+          excludedSocketId
+        ),
+    }
+  );
+}
+
+function getRoomCaptionCache(
+  roomName
+) {
+  if (
+    !roomCaptionTranslations.has(
+      roomName
+    )
+  ) {
+    roomCaptionTranslations.set(
+      roomName,
+      new Map()
+    );
+  }
+
+  return roomCaptionTranslations.get(
+    roomName
+  );
+}
+
+function getRoomCaptionPromiseCache(
+  roomName
+) {
+  if (
+    !roomCaptionTranslationPromises.has(
+      roomName
+    )
+  ) {
+    roomCaptionTranslationPromises.set(
+      roomName,
+      new Map()
+    );
+  }
+
+  return roomCaptionTranslationPromises.get(
+    roomName
+  );
+}
+
+function emitCaptionToSubscribers(
+  roomName,
+  payload
+) {
+  const subscribers =
+    getCaptionSubscribers(
+      roomName
+    );
+
+  for (
+    const participantSocket
+    of subscribers
+  ) {
+    participantSocket.emit(
+      "caption-translation",
+      payload
+    );
+  }
+}
+
+function normalizeCaptionComparisonText(
+  value
+) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase(
+      "pt-BR"
+    )
+    .replace(
+      /[\s.,!?;:()"'`´-]+/g,
+      " "
+    )
+    .trim();
+}
+
+async function translateCaptionToPortuguese(
+  text
+) {
+  const apiKey =
+    process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "GROQ_API_KEY não configurada no servidor."
+    );
+  }
+
+  const model =
+    process.env
+      .GROQ_TRANSLATION_MODEL ||
+    "openai/gpt-oss-20b";
+
+  const controller =
+    new AbortController();
+
+  const timeout = setTimeout(
+    () => controller.abort(),
+    8000
+  );
+
+  try {
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        signal:
+          controller.signal,
+        headers: {
+          Authorization:
+            `Bearer ${apiKey}`,
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          reasoning_effort:
+            "low",
+          temperature: 0,
+          max_completion_tokens:
+            700,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "Você é um tradutor profissional de legendas ao vivo.",
+                "Traduza a fala recebida para português do Brasil natural, curto e fiel ao sentido.",
+                "Se o texto já estiver em português, preserve o texto em português sem explicar nada.",
+                "Preserve nomes próprios, marcas, números, siglas e termos técnicos quando apropriado.",
+                "Não resuma, não responda à fala e não acrescente comentários.",
+                "Retorne somente a legenda final em português do Brasil, sem aspas e sem prefixos.",
+              ].join(" "),
+            },
+            {
+              role: "user",
+              content:
+                String(text || "")
+                  .trim()
+                  .slice(0, 3000),
+            },
+          ],
+        }),
+      }
+    );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data?.error?.message ||
+          "Não foi possível traduzir a legenda."
+      );
+    }
+
+    const translatedText =
+      String(
+        data?.choices?.[0]
+          ?.message?.content ||
+          ""
+      )
+        .trim()
+        .replace(
+          /^(["'“”‘’])|(["'“”‘’])$/g,
+          ""
+        )
+        .trim();
+
+    if (!translatedText) {
+      throw new Error(
+        "A tradução retornou vazia."
+      );
+    }
+
+    return translatedText;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function translateAndEmitCaption(
+  roomName,
+  entry
+) {
+  if (
+    !hasCaptionDemand(
+      roomName
+    )
+  ) {
+    return;
+  }
+
+  const captionCache =
+    getRoomCaptionCache(
+      roomName
+    );
+
+  const cached =
+    captionCache.get(
+      entry.id
+    );
+
+  if (cached) {
+    emitCaptionToSubscribers(
+      roomName,
+      cached
+    );
+
+    return;
+  }
+
+  const promiseCache =
+    getRoomCaptionPromiseCache(
+      roomName
+    );
+
+  let translationPromise =
+    promiseCache.get(
+      entry.id
+    );
+
+  if (!translationPromise) {
+    translationPromise =
+      (async () => {
+        try {
+          const translatedText =
+            await translateCaptionToPortuguese(
+              entry.text
+            );
+
+          return {
+            entryId:
+              entry.id,
+            senderId:
+              entry.senderId,
+            senderName:
+              entry.senderName,
+            originalText:
+              entry.text,
+            translatedText,
+            targetLanguage:
+              "pt-BR",
+            wasTranslated:
+              normalizeCaptionComparisonText(
+                translatedText
+              ) !==
+              normalizeCaptionComparisonText(
+                entry.text
+              ),
+            createdAt:
+              entry.createdAt ||
+              Date.now(),
+            translationError:
+              false,
+          };
+        } catch (error) {
+          console.error(
+            "❌ Erro ao traduzir legenda:",
+            error
+          );
+
+          return {
+            entryId:
+              entry.id,
+            senderId:
+              entry.senderId,
+            senderName:
+              entry.senderName,
+            originalText:
+              entry.text,
+            translatedText:
+              entry.text,
+            targetLanguage:
+              "pt-BR",
+            wasTranslated:
+              false,
+            createdAt:
+              entry.createdAt ||
+              Date.now(),
+            translationError:
+              true,
+          };
+        }
+      })();
+
+    promiseCache.set(
+      entry.id,
+      translationPromise
+    );
+  }
+
+  try {
+    const payload =
+      await translationPromise;
+
+    captionCache.set(
+      entry.id,
+      payload
+    );
+
+    if (
+      captionCache.size > 500
+    ) {
+      const oldestKey =
+        captionCache.keys().next()
+          .value;
+
+      if (oldestKey) {
+        captionCache.delete(
+          oldestKey
+        );
+      }
+    }
+
+    if (
+      hasCaptionDemand(
+        roomName
+      )
+    ) {
+      emitCaptionToSubscribers(
+        roomName,
+        payload
+      );
+    }
+  } finally {
+    promiseCache.delete(
+      entry.id
+    );
+  }
 }
 
 function formatTranscriptForReport(transcript) {
@@ -1041,6 +1434,9 @@ io.on("connection", (socket) => {
 
   socket.data.isTranscribing = false;
   socket.data.isHost = false;
+  socket.data.captionEnabled = false;
+  socket.data.captionTargetLanguage =
+    "pt-BR";
 
   // ==================================================
   // ENTRAR NA SALA
@@ -1135,6 +1531,16 @@ io.on("connection", (socket) => {
         getRoomParticipants(roomName);
 
       socket.join(roomName);
+
+      socket.emit(
+        "caption-demand-state",
+        {
+          active:
+            hasCaptionDemand(
+              roomName
+            ),
+        }
+      );
 
       console.log("");
       console.log(
@@ -1330,6 +1736,50 @@ io.on("connection", (socket) => {
   );
 
   // ==================================================
+  // LEGENDAS AO VIVO TRADUZIDAS PARA PT-BR
+  // ==================================================
+
+  socket.on(
+    "caption-preference-change",
+    ({
+      roomId,
+      enabled,
+      targetLanguage,
+    } = {}) => {
+      if (
+        !roomId ||
+        typeof enabled !==
+          "boolean"
+      ) {
+        return;
+      }
+
+      const roomName =
+        getRoomName(roomId);
+
+      if (
+        socket.data.roomName !==
+        roomName
+      ) {
+        return;
+      }
+
+      socket.data.captionEnabled =
+        enabled;
+
+      socket.data.captionTargetLanguage =
+        targetLanguage ===
+        "pt-BR"
+          ? "pt-BR"
+          : "pt-BR";
+
+      broadcastCaptionDemandState(
+        roomName
+      );
+    }
+  );
+
+  // ==================================================
   // FALA FINAL DA ASSEMBLYAI
   // ==================================================
 
@@ -1441,6 +1891,11 @@ io.on("connection", (socket) => {
 
       io.to(roomName).emit(
         "transcript-entry",
+        savedEntry
+      );
+
+      void translateAndEmitCaption(
+        roomName,
         savedEntry
       );
     }
@@ -1764,6 +2219,14 @@ io.on("connection", (socket) => {
           socket.data.participantName,
           socket.id
         );
+
+      socket.data.captionEnabled =
+        false;
+
+      broadcastCaptionDemandState(
+        roomName,
+        socket.id
+      );
 
       const remainingParticipants =
         getRoomParticipants(

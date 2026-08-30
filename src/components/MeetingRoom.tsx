@@ -10,6 +10,8 @@ import {
 import { useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 
+import { supabase } from "@/lib/supabase";
+
 type MeetingRoomProps = {
   roomId: string;
 };
@@ -70,6 +72,22 @@ type ServerTranscriptEntry = {
   text: string;
   time: string;
   createdAt?: number;
+};
+
+type TranscriptionReason =
+  | "manual"
+  | "captions";
+
+type LiveCaption = {
+  entryId: string;
+  senderId: string;
+  senderName: string;
+  originalText: string;
+  translatedText: string;
+  targetLanguage: "pt-BR";
+  wasTranslated: boolean;
+  createdAt?: number;
+  translationError?: boolean;
 };
 
 type AssemblyMessage = {
@@ -140,6 +158,9 @@ type PictureInPictureDocument = Document & {
 
 const CURRENT_USER_SESSION_KEY =
   "connectai-current-user";
+
+const ACTIVE_MEETING_SESSION_KEY =
+  "connectai-active-meeting";
 
 const FALLBACK_PARTICIPANT_KEY =
   "connectai-participant-name";
@@ -1204,7 +1225,55 @@ export default function MeetingRoom({
       null
     );
 
+  const transcriptionReasonsRef =
+    useRef<
+      Set<TranscriptionReason>
+    >(new Set());
+
+  const captionsEnabledRef =
+    useRef(false);
+
+  const captionDemandActiveRef =
+    useRef(false);
+
+  const captionHideTimerRef =
+    useRef<number | null>(
+      null
+    );
+
   const reportRequestTimerRef =
+    useRef<number | null>(
+      null
+    );
+
+  const savedMeetingIdRef =
+    useRef("");
+
+  const meetingSecondsRef =
+    useRef(0);
+
+  const isHostRef =
+    useRef(false);
+
+  const transcriptEntriesRef =
+    useRef<
+      TranscriptEntry[]
+    >([]);
+
+  const remoteParticipantsRef =
+    useRef<
+      RoomParticipant[]
+    >([]);
+
+  const meetingReportRef =
+    useRef<MeetingReport | null>(
+      null
+    );
+
+  const lastSavedSnapshotRef =
+    useRef("");
+
+  const meetingSaveTimerRef =
     useRef<number | null>(
       null
     );
@@ -1325,6 +1394,28 @@ export default function MeetingRoom({
   ] = useState(false);
 
   const [
+    isManualTranscriptionRequested,
+    setIsManualTranscriptionRequested,
+  ] = useState(false);
+
+  const [
+    isCaptionsEnabled,
+    setIsCaptionsEnabled,
+  ] = useState(false);
+
+  const [
+    isCaptionDemandActive,
+    setIsCaptionDemandActive,
+  ] = useState(false);
+
+  const [
+    activeCaption,
+    setActiveCaption,
+  ] = useState<LiveCaption | null>(
+    null
+  );
+
+  const [
     isTranscriptOpen,
     setIsTranscriptOpen,
   ] = useState(false);
@@ -1367,6 +1458,78 @@ export default function MeetingRoom({
     isReportOpen,
     setIsReportOpen,
   ] = useState(false);
+
+  useEffect(() => {
+    meetingSecondsRef.current =
+      meetingSeconds;
+  }, [meetingSeconds]);
+
+  useEffect(() => {
+    isHostRef.current =
+      isHost;
+  }, [isHost]);
+
+  useEffect(() => {
+    transcriptEntriesRef.current =
+      transcriptEntries;
+  }, [transcriptEntries]);
+
+  useEffect(() => {
+    remoteParticipantsRef.current =
+      remoteParticipants;
+  }, [remoteParticipants]);
+
+  useEffect(() => {
+    meetingReportRef.current =
+      meetingReport;
+  }, [meetingReport]);
+
+  useEffect(() => {
+    captionsEnabledRef.current =
+      isCaptionsEnabled;
+  }, [isCaptionsEnabled]);
+
+  const showLiveCaption =
+    useCallback(
+      (caption: LiveCaption) => {
+        if (
+          !captionsEnabledRef.current
+        ) {
+          return;
+        }
+
+        setActiveCaption(
+          caption
+        );
+
+        if (
+          captionHideTimerRef.current !==
+          null
+        ) {
+          window.clearTimeout(
+            captionHideTimerRef.current
+          );
+        }
+
+        captionHideTimerRef.current =
+          window.setTimeout(
+            () => {
+              captionHideTimerRef.current =
+                null;
+
+              setActiveCaption(
+                (current) =>
+                  current?.entryId ===
+                  caption.entryId
+                    ? null
+                    : current
+              );
+            },
+            7000
+          );
+      },
+      []
+    );
 
   const addNotification =
     useCallback(
@@ -2524,7 +2687,20 @@ export default function MeetingRoom({
     cleanupAssemblyAudio();
   }
 
-  async function startTranscription() {
+  async function startTranscription(
+    reason: TranscriptionReason =
+      "manual"
+  ) {
+    transcriptionReasonsRef.current.add(
+      reason
+    );
+
+    if (reason === "manual") {
+      setIsManualTranscriptionRequested(
+        true
+      );
+    }
+
     if (
       assemblyShouldRunRef.current ||
       isAssemblyConnecting
@@ -2572,13 +2748,15 @@ export default function MeetingRoom({
       true
     );
 
-    setIsTranscriptOpen(
-      true
-    );
+    if (reason === "manual") {
+      setIsTranscriptOpen(
+        true
+      );
 
-    setIsChatOpen(
-      false
-    );
+      setIsChatOpen(
+        false
+      );
+    }
 
     setInterimTranscript(
       ""
@@ -2635,6 +2813,9 @@ export default function MeetingRoom({
 
           speech_model:
             "universal-3-5-pro",
+
+          language_detection:
+            "true",
 
           mode:
             "min_latency",
@@ -2779,10 +2960,12 @@ export default function MeetingRoom({
               }
             );
 
-            addNotification(
-              "Transcrição em tempo real ativada.",
-              "success"
-            );
+            if (reason === "manual") {
+              addNotification(
+                "Transcrição em tempo real ativada.",
+                "success"
+              );
+            }
           } catch (error) {
             console.error(
               "Erro ao iniciar áudio da AssemblyAI:",
@@ -3035,8 +3218,40 @@ export default function MeetingRoom({
   }
 
   function stopTranscription(
-    immediate = false
+    immediate = false,
+    reason:
+      | TranscriptionReason
+      | "all" =
+      "manual"
   ) {
+    if (
+      immediate ||
+      reason === "all"
+    ) {
+      transcriptionReasonsRef.current.clear();
+
+      setIsManualTranscriptionRequested(
+        false
+      );
+    } else {
+      transcriptionReasonsRef.current.delete(
+        reason
+      );
+
+      if (reason === "manual") {
+        setIsManualTranscriptionRequested(
+          false
+        );
+      }
+
+      if (
+        transcriptionReasonsRef.current.size >
+        0
+      ) {
+        return;
+      }
+    }
+
     assemblyShouldRunRef.current =
       false;
 
@@ -3335,6 +3550,17 @@ export default function MeetingRoom({
               participantSessionId
             );
           }
+
+          socket.emit(
+            "caption-preference-change",
+            {
+              roomId,
+              enabled:
+                captionsEnabledRef.current,
+              targetLanguage:
+                "pt-BR",
+            }
+          );
         }
       );
 
@@ -3440,6 +3666,9 @@ export default function MeetingRoom({
           setMeetingReport(
             report
           );
+
+          meetingReportRef.current =
+            report;
         }
       );
 
@@ -3482,6 +3711,78 @@ export default function MeetingRoom({
               );
             }
           );
+
+          if (
+            captionsEnabledRef.current
+          ) {
+            showLiveCaption({
+              entryId:
+                entry.id,
+              senderId:
+                entry.senderId,
+              senderName:
+                entry.senderName,
+              originalText:
+                entry.text,
+              translatedText:
+                "",
+              targetLanguage:
+                "pt-BR",
+              wasTranslated:
+                false,
+              createdAt:
+                entry.createdAt,
+            });
+          }
+        }
+      );
+
+      socket.on(
+        "caption-demand-state",
+        ({
+          active,
+        }: {
+          active:
+            boolean;
+        }) => {
+          const nextActive =
+            active === true;
+
+          captionDemandActiveRef.current =
+            nextActive;
+
+          setIsCaptionDemandActive(
+            nextActive
+          );
+
+          if (nextActive) {
+            void startTranscription(
+              "captions"
+            );
+          } else {
+            stopTranscription(
+              false,
+              "captions"
+            );
+          }
+        }
+      );
+
+      socket.on(
+        "caption-translation",
+        (caption: LiveCaption) => {
+          if (
+            !captionsEnabledRef.current ||
+            !caption?.entryId
+          ) {
+            return;
+          }
+
+          showLiveCaption({
+            ...caption,
+            targetLanguage:
+              "pt-BR",
+          });
         }
       );
 
@@ -3589,12 +3890,16 @@ export default function MeetingRoom({
               )
           );
 
-          addNotification(
-            remoteIsTranscribing
-              ? `${changedName} ativou a transcrição.`
-              : `${changedName} parou a transcrição.`,
-            "info"
-          );
+          if (
+            !captionDemandActiveRef.current
+          ) {
+            addNotification(
+              remoteIsTranscribing
+                ? `${changedName} ativou a transcrição.`
+                : `${changedName} parou a transcrição.`,
+              "info"
+            );
+          }
         }
       );
 
@@ -4057,6 +4362,32 @@ export default function MeetingRoom({
           null;
       }
 
+      if (
+        meetingSaveTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          meetingSaveTimerRef.current
+        );
+
+        meetingSaveTimerRef.current =
+          null;
+      }
+
+      if (
+        captionHideTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          captionHideTimerRef.current
+        );
+
+        captionHideTimerRef.current =
+          null;
+      }
+
+      transcriptionReasonsRef.current.clear();
+
       notificationTimeoutsRef.current.forEach(
         (timeout) => {
           clearTimeout(
@@ -4103,6 +4434,7 @@ export default function MeetingRoom({
   }, [
     roomId,
     addNotification,
+    showLiveCaption,
   ]);
 
   function toggleMicrophone() {
@@ -4284,6 +4616,465 @@ export default function MeetingRoom({
     }
   }
 
+  function toggleCaptions() {
+    const nextState =
+      !isCaptionsEnabled;
+
+    setIsCaptionsEnabled(
+      nextState
+    );
+
+    captionsEnabledRef.current =
+      nextState;
+
+    if (!nextState) {
+      setActiveCaption(
+        null
+      );
+
+      if (
+        captionHideTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          captionHideTimerRef.current
+        );
+
+        captionHideTimerRef.current =
+          null;
+      }
+    }
+
+    socketRef.current?.emit(
+      "caption-preference-change",
+      {
+        roomId,
+        enabled:
+          nextState,
+        targetLanguage:
+          "pt-BR",
+      }
+    );
+
+    addNotification(
+      nextState
+        ? "Legendas em português ativadas. A fala dos participantes será transcrita e traduzida automaticamente."
+        : "Legendas em português desativadas.",
+      nextState
+        ? "success"
+        : "info"
+    );
+  }
+
+  const resolveSavedMeetingId =
+    useCallback(
+      async () => {
+        if (
+          savedMeetingIdRef.current
+        ) {
+          return savedMeetingIdRef.current;
+        }
+
+        try {
+          const stored =
+            sessionStorage.getItem(
+              ACTIVE_MEETING_SESSION_KEY
+            );
+
+          if (stored) {
+            const parsed =
+              JSON.parse(
+                stored
+              ) as {
+                meetingId?: string;
+                roomId?: string;
+              };
+
+            if (
+              parsed.roomId ===
+                roomId &&
+              typeof parsed.meetingId ===
+                "string" &&
+              parsed.meetingId
+            ) {
+              savedMeetingIdRef.current =
+                parsed.meetingId;
+
+              return parsed.meetingId;
+            }
+          }
+        } catch (error) {
+          console.warn(
+            "Não foi possível ler a reunião ativa:",
+            error
+          );
+        }
+
+        const {
+          data:
+            userData,
+          error:
+            userError,
+        } =
+          await supabase.auth.getUser();
+
+        if (
+          userError ||
+          !userData.user
+        ) {
+          return null;
+        }
+
+        const {
+          data,
+          error,
+        } =
+          await supabase
+            .from(
+              "meetings"
+            )
+            .select(
+              "id"
+            )
+            .eq(
+              "room_id",
+              roomId
+            )
+            .eq(
+              "host_id",
+              userData.user.id
+            )
+            .is(
+              "ended_at",
+              null
+            )
+            .maybeSingle();
+
+        if (error) {
+          console.error(
+            "Erro ao localizar reunião salva:",
+            error
+          );
+
+          return null;
+        }
+
+        if (!data?.id) {
+          return null;
+        }
+
+        savedMeetingIdRef.current =
+          data.id;
+
+        return data.id;
+      },
+      [roomId]
+    );
+
+  const saveMeetingSnapshot =
+    useCallback(
+      async ({
+        report,
+        markEnded = false,
+      }: {
+        report?:
+          MeetingReport | null;
+        markEnded?: boolean;
+      } = {}) => {
+        if (
+          !isHostRef.current
+        ) {
+          return false;
+        }
+
+        const meetingId =
+          await resolveSavedMeetingId();
+
+        if (!meetingId) {
+          console.warn(
+            "Nenhuma reunião salva foi encontrada para esta sala."
+          );
+
+          return false;
+        }
+
+        const transcript =
+          transcriptEntriesRef.current.map(
+            (entry) => ({
+              id:
+                entry.id,
+
+              senderId:
+                entry.senderId,
+
+              senderName:
+                entry.senderName,
+
+              text:
+                entry.text,
+
+              time:
+                entry.time,
+
+              createdAt:
+                entry.createdAt ??
+                null,
+            })
+          );
+
+        const participantMap =
+          new Map<
+            string,
+            {
+              name: string;
+              role:
+                | "host"
+                | "participant";
+            }
+          >();
+
+        const ownName =
+          participantNameRef.current.trim();
+
+        if (ownName) {
+          participantMap.set(
+            ownName.toLocaleLowerCase(
+              "pt-BR"
+            ),
+            {
+              name:
+                ownName,
+
+              role:
+                "host",
+            }
+          );
+        }
+
+        remoteParticipantsRef.current.forEach(
+          (participant) => {
+            const name =
+              participant.participantName.trim();
+
+            if (!name) {
+              return;
+            }
+
+            participantMap.set(
+              name.toLocaleLowerCase(
+                "pt-BR"
+              ),
+              {
+                name,
+
+                role:
+                  participant.isHost
+                    ? "host"
+                    : "participant",
+              }
+            );
+          }
+        );
+
+        report?.participants.forEach(
+          (name) => {
+            const normalizedName =
+              String(name || "").trim();
+
+            if (
+              !normalizedName
+            ) {
+              return;
+            }
+
+            const key =
+              normalizedName.toLocaleLowerCase(
+                "pt-BR"
+              );
+
+            if (
+              !participantMap.has(
+                key
+              )
+            ) {
+              participantMap.set(
+                key,
+                {
+                  name:
+                    normalizedName,
+
+                  role:
+                    normalizedName ===
+                    ownName
+                      ? "host"
+                      : "participant",
+                }
+              );
+            }
+          }
+        );
+
+        const participants =
+          Array.from(
+            participantMap.values()
+          );
+
+        const durationSeconds =
+          Math.max(
+            0,
+            report?.durationSeconds ??
+              meetingSecondsRef.current
+          );
+
+        const fingerprint =
+          JSON.stringify({
+            transcriptIds:
+              transcript.map(
+                (entry) =>
+                  entry.id
+              ),
+
+            participants,
+
+            reportId:
+              report?.id ??
+              meetingReportRef.current?.id ??
+              null,
+          });
+
+        if (
+          !markEnded &&
+          report === undefined &&
+          fingerprint ===
+            lastSavedSnapshotRef.current
+        ) {
+          return true;
+        }
+
+        const payload: {
+          participants:
+            {
+              name: string;
+              role:
+                | "host"
+                | "participant";
+            }[];
+          transcript:
+            {
+              id: string;
+              senderId: string;
+              senderName: string;
+              text: string;
+              time: string;
+              createdAt:
+                | number
+                | null;
+            }[];
+          duration_seconds: number;
+          report?:
+            MeetingReport | null;
+          ended_at?: string;
+        } = {
+          participants,
+          transcript,
+          duration_seconds:
+            durationSeconds,
+        };
+
+        if (
+          report !== undefined
+        ) {
+          payload.report =
+            report;
+        }
+
+        if (markEnded) {
+          payload.ended_at =
+            new Date().toISOString();
+        }
+
+        const {
+          error,
+        } =
+          await supabase
+            .from(
+              "meetings"
+            )
+            .update(
+              payload
+            )
+            .eq(
+              "id",
+              meetingId
+            );
+
+        if (error) {
+          console.error(
+            "Erro ao salvar reunião no Supabase:",
+            error
+          );
+
+          return false;
+        }
+
+        lastSavedSnapshotRef.current =
+          fingerprint;
+
+        return true;
+      },
+      [
+        resolveSavedMeetingId,
+      ]
+    );
+
+  useEffect(() => {
+    if (
+      !isHost ||
+      transcriptEntries.length ===
+        0
+    ) {
+      return;
+    }
+
+    if (
+      meetingSaveTimerRef.current !==
+      null
+    ) {
+      window.clearTimeout(
+        meetingSaveTimerRef.current
+      );
+    }
+
+    meetingSaveTimerRef.current =
+      window.setTimeout(
+        () => {
+          meetingSaveTimerRef.current =
+            null;
+
+          void saveMeetingSnapshot();
+        },
+        1500
+      );
+
+    return () => {
+      if (
+        meetingSaveTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          meetingSaveTimerRef.current
+        );
+
+        meetingSaveTimerRef.current =
+          null;
+      }
+    };
+  }, [
+    isHost,
+    transcriptEntries,
+    saveMeetingSnapshot,
+  ]);
+
   function generateMeetingReport() {
     const socket =
       socketRef.current;
@@ -4433,6 +5224,23 @@ export default function MeetingRoom({
           response.report
         );
 
+        meetingReportRef.current =
+          response.report;
+
+        void saveMeetingSnapshot({
+          report:
+            response.report,
+        }).then(
+          (saved) => {
+            if (!saved) {
+              addNotification(
+                "O relatório foi gerado, mas não pôde ser salvo no histórico.",
+                "warning"
+              );
+            }
+          }
+        );
+
         setIsReportOpen(
           true
         );
@@ -4540,7 +5348,18 @@ export default function MeetingRoom({
     }
   }
 
-  function leaveMeeting() {
+  async function leaveMeeting() {
+    if (
+      isHostRef.current
+    ) {
+      await saveMeetingSnapshot({
+        report:
+          meetingReportRef.current,
+        markEnded:
+          true,
+      });
+    }
+
     const pipDocument =
       document as PictureInPictureDocument;
 
@@ -4555,7 +5374,8 @@ export default function MeetingRoom({
     }
 
     stopTranscription(
-      true
+      true,
+      "all"
     );
 
     mediaStreamRef.current
@@ -5191,6 +6011,53 @@ export default function MeetingRoom({
                   </div>
                 )}
               </div>
+
+              {isCaptionsEnabled &&
+                activeCaption && (
+                  <div className="pointer-events-none absolute inset-x-3 bottom-4 z-40 flex justify-center sm:inset-x-8 sm:bottom-5">
+                    <div className="max-w-4xl rounded-2xl border border-white/15 bg-black/80 px-4 py-3 text-center shadow-2xl backdrop-blur-xl sm:px-6 sm:py-4">
+                      <div className="mb-1 flex items-center justify-center gap-2 text-[11px] font-semibold text-emerald-300 sm:text-xs">
+                        <span>CC PT-BR</span>
+                        <span className="text-zinc-500">
+                          •
+                        </span>
+                        <span className="max-w-[52vw] truncate text-zinc-300">
+                          {activeCaption.senderName}
+                        </span>
+                      </div>
+
+                      {activeCaption.translatedText ? (
+                        <>
+                          {activeCaption.wasTranslated && (
+                            <p className="mb-1 line-clamp-2 text-xs leading-relaxed text-zinc-400 sm:text-sm">
+                              {activeCaption.originalText}
+                            </p>
+                          )}
+
+                          <p className="text-base font-semibold leading-relaxed text-white sm:text-xl">
+                            {activeCaption.translatedText}
+                          </p>
+
+                          {activeCaption.translationError && (
+                            <p className="mt-1 text-[10px] text-yellow-300 sm:text-xs">
+                              Tradução indisponível — exibindo o texto original.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-base font-semibold leading-relaxed text-white sm:text-xl">
+                            {activeCaption.originalText}
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-emerald-300/80 sm:text-xs">
+                            Traduzindo para português...
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
             </section>
 
             {mediaError && (
@@ -5326,36 +6193,66 @@ export default function MeetingRoom({
               <button
                 type="button"
                 disabled={
-                  isAssemblyConnecting
+                  isAssemblyConnecting &&
+                  !isTranscribing
                 }
                 onClick={() => {
                   if (
-                    isTranscribing ||
-                    isAssemblyConnecting
+                    isManualTranscriptionRequested
                   ) {
-                    stopTranscription();
+                    stopTranscription(
+                      false,
+                      "manual"
+                    );
                   } else {
-                    void startTranscription();
+                    void startTranscription(
+                      "manual"
+                    );
                   }
                 }}
                 className={`${controlButton} ${
-                  isTranscribing
+                  isManualTranscriptionRequested
                     ? "border-red-400/20 bg-red-500/25"
                     : "border-cyan-400/15 bg-cyan-500/10"
                 } disabled:opacity-50`}
               >
-                {isAssemblyConnecting
+                {isAssemblyConnecting &&
+                !isTranscribing
                   ? "⌛"
-                  : isTranscribing
+                  : isManualTranscriptionRequested
                     ? "⏹"
                     : "📝"}
 
                 <span className="hidden sm:inline">
-                  {isAssemblyConnecting
+                  {isAssemblyConnecting &&
+                  !isTranscribing
                     ? "Conectando..."
-                    : isTranscribing
+                    : isManualTranscriptionRequested
                       ? "Parar transcrição"
-                      : "Transcrição Live"}
+                      : isTranscribing &&
+                          isCaptionDemandActive
+                        ? "Transcrição p/ legendas"
+                        : "Transcrição Live"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={
+                  toggleCaptions
+                }
+                className={`${controlButton} ${
+                  isCaptionsEnabled
+                    ? "border-emerald-300/25 bg-emerald-500/25 text-emerald-50"
+                    : "border-emerald-400/15 bg-emerald-500/10"
+                }`}
+              >
+                CC
+
+                <span className="hidden sm:inline">
+                  {isCaptionsEnabled
+                    ? "Legendas PT-BR"
+                    : "Ativar legendas"}
                 </span>
               </button>
 
@@ -5426,8 +6323,8 @@ export default function MeetingRoom({
 
               <button
                 type="button"
-                onClick={
-                  leaveMeeting
+                onClick={() =>
+                  void leaveMeeting()
                 }
                 className={`${controlButton} border-red-400/20 bg-red-500/20`}
               >
