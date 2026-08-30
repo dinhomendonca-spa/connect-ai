@@ -1,101 +1,179 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import {
+  FormEvent,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import FormField from "@/components/FormField";
+import { supabase } from "@/lib/supabase";
 
-type StoredUser = {
-  name: string;
-  email: string;
-};
+const CURRENT_USER_SESSION_KEY =
+  "connectai-current-user";
 
-const USERS_STORAGE_KEY = "connectai-users";
+const AUTH_RETURN_TO_KEY =
+  "connectai-auth-return-to";
 
-function isValidEmail(email: string) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isValidEmail(
+  email: string
+) {
+  const emailRegex =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  return emailRegex.test(email);
+  return emailRegex.test(
+    email
+  );
 }
 
-function getStoredUsers(): StoredUser[] {
-  try {
-    const storedUsers = localStorage.getItem(
-      USERS_STORAGE_KEY
-    );
+function isSafeReturnPath(
+  value: string
+) {
+  return (
+    value.startsWith("/") &&
+    !value.startsWith("//")
+  );
+}
 
-    if (!storedUsers) {
-      return [];
-    }
+function getStoredReturnPath() {
+  const stored =
+    localStorage.getItem(
+      AUTH_RETURN_TO_KEY
+    ) || "";
 
-    const parsedUsers = JSON.parse(storedUsers);
-
-    if (!Array.isArray(parsedUsers)) {
-      return [];
-    }
-
-    return parsedUsers;
-  } catch {
-    return [];
+  if (
+    stored &&
+    isSafeReturnPath(
+      stored
+    )
+  ) {
+    return stored;
   }
+
+  return "/dashboard";
 }
 
 export default function RegisterForm() {
-  const router = useRouter();
+  const router =
+    useRouter();
 
-  // Dados preenchidos pelo usuário.
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [
+    name,
+    setName,
+  ] = useState("");
+
+  const [
+    email,
+    setEmail,
+  ] = useState("");
+
+  const [
+    password,
+    setPassword,
+  ] = useState("");
+
   const [
     passwordConfirmation,
     setPasswordConfirmation,
   ] = useState("");
 
-  // Mensagens de erro.
-  const [nameError, setNameError] = useState("");
-  const [emailError, setEmailError] = useState("");
-  const [passwordError, setPasswordError] =
-    useState("");
+  const [
+    nameError,
+    setNameError,
+  ] = useState("");
+
+  const [
+    emailError,
+    setEmailError,
+  ] = useState("");
+
+  const [
+    passwordError,
+    setPasswordError,
+  ] = useState("");
+
   const [
     passwordConfirmationError,
     setPasswordConfirmationError,
   ] = useState("");
 
-  function handleSubmit(
-    event: FormEvent<HTMLFormElement>
+  const [
+    generalError,
+    setGeneralError,
+  ] = useState("");
+
+  const [
+    successMessage,
+    setSuccessMessage,
+  ] = useState("");
+
+  const [
+    isSubmitting,
+    setIsSubmitting,
+  ] = useState(false);
+
+  async function handleSubmit(
+    event:
+      FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
 
     setNameError("");
     setEmailError("");
     setPasswordError("");
     setPasswordConfirmationError("");
+    setGeneralError("");
+    setSuccessMessage("");
 
     let hasError = false;
 
-    const normalizedName = name.trim();
-    const normalizedEmail = email
-      .trim()
-      .toLowerCase();
+    const normalizedName =
+      name.trim();
+
+    const normalizedEmail =
+      email
+        .trim()
+        .toLowerCase();
 
     if (!normalizedName) {
-      setNameError("Digite seu nome.");
+      setNameError(
+        "Digite seu nome."
+      );
+
       hasError = true;
     }
 
     if (!normalizedEmail) {
-      setEmailError("Digite seu e-mail.");
+      setEmailError(
+        "Digite seu e-mail."
+      );
+
       hasError = true;
-    } else if (!isValidEmail(normalizedEmail)) {
-      setEmailError("Digite um e-mail válido.");
+    } else if (
+      !isValidEmail(
+        normalizedEmail
+      )
+    ) {
+      setEmailError(
+        "Digite um e-mail válido."
+      );
+
       hasError = true;
     }
 
     if (!password.trim()) {
-      setPasswordError("Digite uma senha.");
+      setPasswordError(
+        "Digite uma senha."
+      );
+
       hasError = true;
-    } else if (password.length < 6) {
+    } else if (
+      password.length < 6
+    ) {
       setPasswordError(
         "A senha deve ter pelo menos 6 caracteres."
       );
@@ -103,14 +181,17 @@ export default function RegisterForm() {
       hasError = true;
     }
 
-    if (!passwordConfirmation.trim()) {
+    if (
+      !passwordConfirmation.trim()
+    ) {
       setPasswordConfirmationError(
         "Confirme sua senha."
       );
 
       hasError = true;
     } else if (
-      passwordConfirmation !== password
+      passwordConfirmation !==
+      password
     ) {
       setPasswordConfirmationError(
         "As senhas não coincidem."
@@ -123,46 +204,108 @@ export default function RegisterForm() {
       return;
     }
 
-    const storedUsers = getStoredUsers();
+    setIsSubmitting(true);
 
-    const userAlreadyExists = storedUsers.some(
-      (user) =>
-        user.email.toLowerCase() === normalizedEmail
-    );
+    try {
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.signUp(
+          {
+            email:
+              normalizedEmail,
 
-    if (userAlreadyExists) {
-      setEmailError(
-        "Já existe uma conta cadastrada com este e-mail."
+            password,
+
+            options: {
+              data: {
+                name:
+                  normalizedName,
+              },
+
+              emailRedirectTo:
+                `${window.location.origin}/`,
+            },
+          }
+        );
+
+      if (error) {
+        const message =
+          error.message.toLowerCase();
+
+        if (
+          message.includes(
+            "already"
+          ) ||
+          message.includes(
+            "registered"
+          )
+        ) {
+          setEmailError(
+            "Já existe uma conta cadastrada com este e-mail."
+          );
+        } else {
+          setGeneralError(
+            error.message
+          );
+        }
+
+        return;
+      }
+
+      if (data.session) {
+        sessionStorage.setItem(
+          CURRENT_USER_SESSION_KEY,
+          JSON.stringify({
+            name:
+              normalizedName,
+
+            email:
+              normalizedEmail,
+          })
+        );
+
+        const returnTo =
+          getStoredReturnPath();
+
+        localStorage.removeItem(
+          AUTH_RETURN_TO_KEY
+        );
+
+        router.push(
+          returnTo
+        );
+
+        router.refresh();
+
+        return;
+      }
+
+      setSuccessMessage(
+        "Conta criada. Confirme seu e-mail e depois faça login. O ConnectAI guardou o convite para levar você de volta à reunião."
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao criar conta:",
+        error
       );
 
-      return;
+      setGeneralError(
+        "Não foi possível criar sua conta agora. Tente novamente."
+      );
+    } finally {
+      setIsSubmitting(
+        false
+      );
     }
-
-    const newUser: StoredUser = {
-      name: normalizedName,
-      email: normalizedEmail,
-    };
-
-    // Nesta fase do projeto guardamos apenas
-    // nome e e-mail.
-    // A senha NÃO é armazenada no navegador.
-    const updatedUsers = [
-      ...storedUsers,
-      newUser,
-    ];
-
-    localStorage.setItem(
-      USERS_STORAGE_KEY,
-      JSON.stringify(updatedUsers)
-    );
-
-    // Depois do cadastro, vai para o login.
-    router.push("/");
   }
 
   return (
     <form
-      onSubmit={handleSubmit}
+      onSubmit={
+        handleSubmit
+      }
       className="space-y-5"
     >
       <FormField
@@ -172,8 +315,12 @@ export default function RegisterForm() {
         placeholder="Digite seu nome"
         value={name}
         error={nameError}
-        onChange={(event) =>
-          setName(event.target.value)
+        onChange={(
+          event
+        ) =>
+          setName(
+            event.target.value
+          )
         }
       />
 
@@ -184,8 +331,12 @@ export default function RegisterForm() {
         placeholder="seu@email.com"
         value={email}
         error={emailError}
-        onChange={(event) =>
-          setEmail(event.target.value)
+        onChange={(
+          event
+        ) =>
+          setEmail(
+            event.target.value
+          )
         }
       />
 
@@ -196,8 +347,12 @@ export default function RegisterForm() {
         placeholder="Crie uma senha"
         value={password}
         error={passwordError}
-        onChange={(event) =>
-          setPassword(event.target.value)
+        onChange={(
+          event
+        ) =>
+          setPassword(
+            event.target.value
+          )
         }
       />
 
@@ -206,20 +361,43 @@ export default function RegisterForm() {
         label="Confirmar senha"
         type="password"
         placeholder="Digite a senha novamente"
-        value={passwordConfirmation}
-        error={passwordConfirmationError}
-        onChange={(event) =>
+        value={
+          passwordConfirmation
+        }
+        error={
+          passwordConfirmationError
+        }
+        onChange={(
+          event
+        ) =>
           setPasswordConfirmation(
             event.target.value
           )
         }
       />
 
+      {generalError && (
+        <div className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {generalError}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+          {successMessage}
+        </div>
+      )}
+
       <button
         type="submit"
-        className="w-full cursor-pointer rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 active:scale-[0.98]"
+        disabled={
+          isSubmitting
+        }
+        className="w-full cursor-pointer rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Criar conta
+        {isSubmitting
+          ? "Criando conta..."
+          : "Criar conta"}
       </button>
     </form>
   );

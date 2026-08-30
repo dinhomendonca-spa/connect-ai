@@ -6,6 +6,9 @@ const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
 
+const CONNECTAI_AUTH_COOKIE =
+  "connectai_auth";
+
 const app = next({
   dev,
   hostname,
@@ -31,6 +34,200 @@ const roomHostSessions = new Map();
 const roomStartedAt = new Map();
 const roomReports = new Map();
 const roomReportPromises = new Map();
+
+function parseCookies(cookieHeader = "") {
+  const cookies = {};
+
+  for (const part of String(cookieHeader).split(";")) {
+    const separatorIndex = part.indexOf("=");
+
+    if (separatorIndex < 0) {
+      continue;
+    }
+
+    const key = part
+      .slice(0, separatorIndex)
+      .trim();
+
+    const rawValue = part
+      .slice(separatorIndex + 1)
+      .trim();
+
+    if (!key) {
+      continue;
+    }
+
+    try {
+      cookies[key] =
+        decodeURIComponent(rawValue);
+    } catch {
+      cookies[key] = rawValue;
+    }
+  }
+
+  return cookies;
+}
+
+function getBearerToken(req) {
+  const authorization =
+    req.headers.authorization;
+
+  if (
+    typeof authorization !== "string" ||
+    !authorization.startsWith("Bearer ")
+  ) {
+    return "";
+  }
+
+  return authorization
+    .slice("Bearer ".length)
+    .trim();
+}
+
+function getAuthCookieToken(cookieHeader) {
+  const cookies =
+    parseCookies(cookieHeader);
+
+  return String(
+    cookies[CONNECTAI_AUTH_COOKIE] || ""
+  ).trim();
+}
+
+function buildAuthCookie(
+  token,
+  maxAgeSeconds = 3600
+) {
+  const parts = [
+    `${CONNECTAI_AUTH_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+
+  if (!dev) {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+}
+
+function buildExpiredAuthCookie() {
+  const parts = [
+    `${CONNECTAI_AUTH_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+
+  if (!dev) {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+}
+
+async function verifySupabaseAccessToken(
+  accessToken
+) {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  const supabasePublishableKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  if (
+    !supabaseUrl ||
+    !supabasePublishableKey ||
+    !accessToken
+  ) {
+    console.error(
+      "❌ Supabase não configurado no servidor. Verifique NEXT_PUBLIC_SUPABASE_URL e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY."
+    );
+
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/auth/v1/user`,
+      {
+        method: "GET",
+        headers: {
+          apikey:
+            supabasePublishableKey,
+
+          Authorization:
+            `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const user =
+      await response.json();
+
+    if (
+      !user?.id ||
+      user.is_anonymous === true
+    ) {
+      return null;
+    }
+
+    return user;
+  } catch (error) {
+    console.error(
+      "Erro ao validar sessão Supabase:",
+      error
+    );
+
+    return null;
+  }
+}
+
+async function getAuthenticatedUserFromRequest(
+  req
+) {
+  const accessToken =
+    getAuthCookieToken(
+      req.headers.cookie
+    );
+
+  if (!accessToken) {
+    return null;
+  }
+
+  return verifySupabaseAccessToken(
+    accessToken
+  );
+}
+
+function sendJson(
+  res,
+  statusCode,
+  payload
+) {
+  res.statusCode =
+    statusCode;
+
+  res.setHeader(
+    "Content-Type",
+    "application/json; charset=utf-8"
+  );
+
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate"
+  );
+
+  res.end(
+    JSON.stringify(payload)
+  );
+}
 
 function getRoomName(roomId) {
   return `meeting:${roomId}`;
@@ -566,7 +763,96 @@ const httpServer = createServer(
       );
 
       // ==============================================
+      // SESSÃO PROTEGIDA DO CONNECTAI
+      // ==============================================
+
+      if (
+        requestUrl.pathname ===
+          "/api/connectai-session" &&
+        req.method === "POST"
+      ) {
+        const accessToken =
+          getBearerToken(req);
+
+        if (!accessToken) {
+          sendJson(
+            res,
+            401,
+            {
+              error:
+                "Autenticação obrigatória.",
+            }
+          );
+
+          return;
+        }
+
+        const user =
+          await verifySupabaseAccessToken(
+            accessToken
+          );
+
+        if (!user) {
+          sendJson(
+            res,
+            401,
+            {
+              error:
+                "Sessão inválida ou expirada.",
+            }
+          );
+
+          return;
+        }
+
+        res.setHeader(
+          "Set-Cookie",
+          buildAuthCookie(
+            accessToken
+          )
+        );
+
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            user: {
+              id:
+                user.id,
+              email:
+                user.email || "",
+            },
+          }
+        );
+
+        return;
+      }
+
+      if (
+        requestUrl.pathname ===
+          "/api/connectai-session" &&
+        req.method === "DELETE"
+      ) {
+        res.setHeader(
+          "Set-Cookie",
+          buildExpiredAuthCookie()
+        );
+
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+          }
+        );
+
+        return;
+      }
+
+      // ==============================================
       // TOKEN TEMPORÁRIO DA ASSEMBLYAI
+      // SOMENTE USUÁRIOS AUTENTICADOS
       // ==============================================
 
       if (
@@ -574,6 +860,24 @@ const httpServer = createServer(
         requestUrl.pathname ===
           "/api/assemblyai-token"
       ) {
+        const authenticatedUser =
+          await getAuthenticatedUserFromRequest(
+            req
+          );
+
+        if (!authenticatedUser) {
+          sendJson(
+            res,
+            401,
+            {
+              error:
+                "Faça login para usar a transcrição.",
+            }
+          );
+
+          return;
+        }
+
         res.setHeader(
           "Cache-Control",
           "no-store, no-cache, must-revalidate"
@@ -681,6 +985,49 @@ const httpServer = createServer(
 // ==================================================
 
 const io = new Server(httpServer);
+
+io.use(
+  async (socket, next) => {
+    const accessToken =
+      getAuthCookieToken(
+        socket.handshake.headers
+          .cookie
+      );
+
+    if (!accessToken) {
+      next(
+        new Error(
+          "AUTH_REQUIRED"
+        )
+      );
+
+      return;
+    }
+
+    const user =
+      await verifySupabaseAccessToken(
+        accessToken
+      );
+
+    if (!user) {
+      next(
+        new Error(
+          "AUTH_REQUIRED"
+        )
+      );
+
+      return;
+    }
+
+    socket.data.authUserId =
+      user.id;
+
+    socket.data.authEmail =
+      user.email || "";
+
+    next();
+  }
+);
 
 io.on("connection", (socket) => {
   console.log(

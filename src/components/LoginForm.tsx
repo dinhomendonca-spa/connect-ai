@@ -1,86 +1,205 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 
 import FormField from "@/components/FormField";
-
-type StoredUser = {
-  name: string;
-  email: string;
-};
-
-const USERS_STORAGE_KEY = "connectai-users";
+import { supabase } from "@/lib/supabase";
 
 const CURRENT_USER_SESSION_KEY =
   "connectai-current-user";
 
-function isValidEmail(email: string) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const AUTH_RETURN_TO_KEY =
+  "connectai-auth-return-to";
 
-  return emailRegex.test(email);
+function isValidEmail(
+  email: string
+) {
+  const emailRegex =
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  return emailRegex.test(
+    email
+  );
 }
 
-function getStoredUsers(): StoredUser[] {
-  try {
-    const storedUsers = localStorage.getItem(
-      USERS_STORAGE_KEY
+function isSafeReturnPath(
+  value: string
+) {
+  return (
+    value.startsWith("/") &&
+    !value.startsWith("//")
+  );
+}
+
+function getReturnPath() {
+  const params =
+    new URLSearchParams(
+      window.location.search
     );
 
-    if (!storedUsers) {
-      return [];
-    }
+  const fromUrl =
+    params.get("next") || "";
 
-    const parsedUsers = JSON.parse(storedUsers);
-
-    if (!Array.isArray(parsedUsers)) {
-      return [];
-    }
-
-    return parsedUsers;
-  } catch {
-    return [];
+  if (
+    fromUrl &&
+    isSafeReturnPath(
+      fromUrl
+    )
+  ) {
+    return fromUrl;
   }
+
+  const stored =
+    localStorage.getItem(
+      AUTH_RETURN_TO_KEY
+    ) || "";
+
+  if (
+    stored &&
+    isSafeReturnPath(
+      stored
+    )
+  ) {
+    return stored;
+  }
+
+  return "/dashboard";
+}
+
+function getUserName(
+  user: {
+    email?: string;
+    user_metadata?: {
+      name?: unknown;
+    };
+  }
+) {
+  const metadataName =
+    user.user_metadata?.name;
+
+  if (
+    typeof metadataName ===
+      "string" &&
+    metadataName.trim()
+  ) {
+    return metadataName.trim();
+  }
+
+  return (
+    user.email?.split("@")[0] ||
+    "Usuário"
+  );
 }
 
 export default function LoginForm() {
-  const router = useRouter();
+  const router =
+    useRouter();
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [
+    email,
+    setEmail,
+  ] = useState("");
 
-  const [emailError, setEmailError] =
-    useState("");
+  const [
+    password,
+    setPassword,
+  ] = useState("");
 
-  const [passwordError, setPasswordError] =
-    useState("");
+  const [
+    emailError,
+    setEmailError,
+  ] = useState("");
 
-  function handleSubmit(
-    event: FormEvent<HTMLFormElement>
+  const [
+    passwordError,
+    setPasswordError,
+  ] = useState("");
+
+  const [
+    generalError,
+    setGeneralError,
+  ] = useState("");
+
+  const [
+    isSubmitting,
+    setIsSubmitting,
+  ] = useState(false);
+
+  useEffect(() => {
+    const params =
+      new URLSearchParams(
+        window.location.search
+      );
+
+    const returnTo =
+      params.get("next") || "";
+
+    if (
+      returnTo &&
+      isSafeReturnPath(
+        returnTo
+      )
+    ) {
+      localStorage.setItem(
+        AUTH_RETURN_TO_KEY,
+        returnTo
+      );
+    }
+  }, []);
+
+  async function handleSubmit(
+    event:
+      FormEvent<HTMLFormElement>
   ) {
     event.preventDefault();
 
+    if (isSubmitting) {
+      return;
+    }
+
     setEmailError("");
     setPasswordError("");
+    setGeneralError("");
 
     let hasError = false;
 
-    const normalizedEmail = email
-      .trim()
-      .toLowerCase();
+    const normalizedEmail =
+      email
+        .trim()
+        .toLowerCase();
 
     if (!normalizedEmail) {
-      setEmailError("Digite seu e-mail.");
+      setEmailError(
+        "Digite seu e-mail."
+      );
+
       hasError = true;
-    } else if (!isValidEmail(normalizedEmail)) {
-      setEmailError("Digite um e-mail válido.");
+    } else if (
+      !isValidEmail(
+        normalizedEmail
+      )
+    ) {
+      setEmailError(
+        "Digite um e-mail válido."
+      );
+
       hasError = true;
     }
 
     if (!password.trim()) {
-      setPasswordError("Digite sua senha.");
+      setPasswordError(
+        "Digite sua senha."
+      );
+
       hasError = true;
-    } else if (password.length < 6) {
+    } else if (
+      password.length < 6
+    ) {
       setPasswordError(
         "A senha deve ter pelo menos 6 caracteres."
       );
@@ -92,38 +211,105 @@ export default function LoginForm() {
       return;
     }
 
-    const storedUsers = getStoredUsers();
+    setIsSubmitting(true);
 
-    const user = storedUsers.find(
-      (storedUser) =>
-        storedUser.email.toLowerCase() ===
-        normalizedEmail
-    );
+    try {
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.signInWithPassword(
+          {
+            email:
+              normalizedEmail,
 
-    if (!user) {
-      setEmailError(
-        "Conta não encontrada. Crie uma conta primeiro."
+            password,
+          }
+        );
+
+      if (error) {
+        setGeneralError(
+          "E-mail ou senha inválidos."
+        );
+
+        return;
+      }
+
+      if (
+        !data.user ||
+        !data.session
+      ) {
+        setGeneralError(
+          "Não foi possível iniciar sua sessão."
+        );
+
+        return;
+      }
+
+      if (
+        data.user.is_anonymous ===
+        true
+      ) {
+        await supabase.auth.signOut();
+
+        setGeneralError(
+          "É necessário usar uma conta registrada."
+        );
+
+        return;
+      }
+
+      const currentUser = {
+        name:
+          getUserName(
+            data.user
+          ),
+
+        email:
+          data.user.email ||
+          normalizedEmail,
+      };
+
+      sessionStorage.setItem(
+        CURRENT_USER_SESSION_KEY,
+        JSON.stringify(
+          currentUser
+        )
       );
 
-      return;
+      const returnTo =
+        getReturnPath();
+
+      localStorage.removeItem(
+        AUTH_RETURN_TO_KEY
+      );
+
+      router.push(
+        returnTo
+      );
+
+      router.refresh();
+    } catch (error) {
+      console.error(
+        "Erro ao fazer login:",
+        error
+      );
+
+      setGeneralError(
+        "Não foi possível entrar agora. Tente novamente."
+      );
+    } finally {
+      setIsSubmitting(
+        false
+      );
     }
-
-    // Autenticação temporária do protótipo.
-    // Não verificamos senha de verdade porque
-    // ainda não existe backend.
-    //
-    // Nunca armazenamos a senha no navegador.
-    sessionStorage.setItem(
-      CURRENT_USER_SESSION_KEY,
-      JSON.stringify(user)
-    );
-
-    router.push("/dashboard");
   }
 
   return (
     <form
-      onSubmit={handleSubmit}
+      onSubmit={
+        handleSubmit
+      }
       className="space-y-5"
     >
       <FormField
@@ -133,8 +319,12 @@ export default function LoginForm() {
         placeholder="seu@email.com"
         value={email}
         error={emailError}
-        onChange={(event) =>
-          setEmail(event.target.value)
+        onChange={(
+          event
+        ) =>
+          setEmail(
+            event.target.value
+          )
         }
       />
 
@@ -145,16 +335,31 @@ export default function LoginForm() {
         placeholder="Digite sua senha"
         value={password}
         error={passwordError}
-        onChange={(event) =>
-          setPassword(event.target.value)
+        onChange={(
+          event
+        ) =>
+          setPassword(
+            event.target.value
+          )
         }
       />
 
+      {generalError && (
+        <div className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {generalError}
+        </div>
+      )}
+
       <button
         type="submit"
-        className="w-full cursor-pointer rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 active:scale-[0.98]"
+        disabled={
+          isSubmitting
+        }
+        className="w-full cursor-pointer rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Entrar
+        {isSubmitting
+          ? "Entrando..."
+          : "Entrar"}
       </button>
     </form>
   );

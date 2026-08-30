@@ -1,47 +1,23 @@
-import DashboardCard from "@/components/DashboardCard";
 import DashboardHeader from "@/components/DashboardHeader";
-
-// Dados usados para montar os cards do Dashboard.
-const dashboardItems = [
-  {
-    id: 1,
-    title: "Nova reunião",
-    description: "Crie uma sala para iniciar uma nova conversa.",
-    href: "/reuniao/nova",
-  },
-  {
-    id: 2,
-    title: "Reuniões",
-    description: "Acompanhe suas reuniões agendadas e recentes.",
-    href: "/reunioes",
-  },
-  {
-    id: 3,
-    title: "Histórico",
-    description: "Consulte conversas e reuniões anteriores.",
-    href: "/historico",
-  },
-];
+import RequireAuth from "@/components/RequireAuth";
+import WorkspaceDashboard from "@/components/WorkspaceDashboard";
 
 export default function DashboardPage() {
   return (
-    // Página principal exibida após o login.
-    <main className="min-h-screen bg-zinc-950 px-6 py-8 text-white">
-      <section className="mx-auto w-full max-w-5xl">
-        <DashboardHeader />
+    <main className="min-h-screen bg-[#05070d] text-white">
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-blue-500/10 blur-3xl" />
 
-        {/* Os cards são gerados a partir dos dados da lista acima. */}
-        <section className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {dashboardItems.map((item) => (
-            <DashboardCard
-              key={item.id}
-              title={item.title}
-              description={item.description}
-              href={item.href}
-            />
-          ))}
-        </section>
-      </section>
+        <div className="absolute -right-32 top-1/3 h-96 w-96 rounded-full bg-violet-500/10 blur-3xl" />
+      </div>
+
+      <RequireAuth>
+        <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <DashboardHeader />
+
+          <WorkspaceDashboard />
+        </div>
+      </RequireAuth>
     </main>
   );
 }
