@@ -128,6 +128,16 @@ type MeetingReportResponse = {
   error?: string;
 };
 
+type PictureInPictureVideoElement = HTMLVideoElement & {
+  requestPictureInPicture?: () => Promise<unknown>;
+};
+
+type PictureInPictureDocument = Document & {
+  pictureInPictureEnabled?: boolean;
+  pictureInPictureElement?: Element | null;
+  exitPictureInPicture?: () => Promise<void>;
+};
+
 const CURRENT_USER_SESSION_KEY =
   "connectai-current-user";
 
@@ -136,6 +146,9 @@ const FALLBACK_PARTICIPANT_KEY =
 
 const PARTICIPANT_SESSION_KEY =
   "connectai-participant-session";
+
+const HOST_RESUME_SESSION_KEY =
+  "connectai-host-resume-session";
 
 const MAX_ROOM_PARTICIPANTS = 6;
 
@@ -191,6 +204,87 @@ function formatMeetingDuration(
   return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
 }
 
+function getCurrentUserIdentityKey(): string | null {
+  try {
+    const storedCurrentUser =
+      sessionStorage.getItem(
+        CURRENT_USER_SESSION_KEY
+      );
+
+    if (!storedCurrentUser) {
+      return null;
+    }
+
+    const currentUser:
+      CurrentUser =
+      JSON.parse(
+        storedCurrentUser
+      );
+
+    const email =
+      String(
+        currentUser.email || ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (email) {
+      return `email:${email}`;
+    }
+
+    const name =
+      String(
+        currentUser.name || ""
+      )
+        .trim()
+        .toLowerCase();
+
+    return name
+      ? `name:${name}`
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getHostResumeStorageKey(
+  roomId: string
+): string | null {
+  const identity =
+    getCurrentUserIdentityKey();
+
+  if (!identity) {
+    return null;
+  }
+
+  return `${HOST_RESUME_SESSION_KEY}:${roomId}:${encodeURIComponent(
+    identity
+  )}`;
+}
+
+function persistHostResumeSessionId(
+  roomId: string,
+  participantSessionId: string
+) {
+  try {
+    const storageKey =
+      getHostResumeStorageKey(
+        roomId
+      );
+
+    if (!storageKey) {
+      return;
+    }
+
+    localStorage.setItem(
+      storageKey,
+      participantSessionId
+    );
+  } catch {
+    // Persistência opcional. A reunião continua mesmo sem localStorage.
+  }
+}
+
 function getOrCreateParticipantSessionId(
   roomId: string
 ): string {
@@ -198,6 +292,29 @@ function getOrCreateParticipantSessionId(
     `${PARTICIPANT_SESSION_KEY}:${roomId}`;
 
   try {
+    // Se este usuário já foi reconhecido como anfitrião desta sala,
+    // reutilizamos o mesmo identificador mesmo após sair e voltar.
+    const hostResumeStorageKey =
+      getHostResumeStorageKey(
+        roomId
+      );
+
+    const savedHostSession =
+      hostResumeStorageKey
+        ? localStorage.getItem(
+            hostResumeStorageKey
+          )
+        : null;
+
+    if (savedHostSession) {
+      sessionStorage.setItem(
+        storageKey,
+        savedHostSession
+      );
+
+      return savedHostSession;
+    }
+
     const stored =
       sessionStorage.getItem(storageKey);
 
@@ -978,6 +1095,11 @@ export default function MeetingRoom({
       null
     );
 
+  const pictureInPictureVideoRef =
+    useRef<HTMLVideoElement>(
+      null
+    );
+
   const remoteVideoRefs =
     useRef<
       Map<
@@ -1136,6 +1258,11 @@ export default function MeetingRoom({
   const [
     isFullscreenLayout,
     setIsFullscreenLayout,
+  ] = useState(false);
+
+  const [
+    isPictureInPicture,
+    setIsPictureInPicture,
   ] = useState(false);
 
   const [
@@ -1304,6 +1431,49 @@ export default function MeetingRoom({
       document.removeEventListener(
         "fullscreenchange",
         handleFullscreenChange
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    const video =
+      pictureInPictureVideoRef.current;
+
+    if (!video) {
+      return;
+    }
+
+    function handleEnterPictureInPicture() {
+      setIsPictureInPicture(
+        true
+      );
+    }
+
+    function handleLeavePictureInPicture() {
+      setIsPictureInPicture(
+        false
+      );
+    }
+
+    video.addEventListener(
+      "enterpictureinpicture",
+      handleEnterPictureInPicture
+    );
+
+    video.addEventListener(
+      "leavepictureinpicture",
+      handleLeavePictureInPicture
+    );
+
+    return () => {
+      video.removeEventListener(
+        "enterpictureinpicture",
+        handleEnterPictureInPicture
+      );
+
+      video.removeEventListener(
+        "leavepictureinpicture",
+        handleLeavePictureInPicture
       );
     };
   }, []);
@@ -1491,6 +1661,103 @@ export default function MeetingRoom({
 
       addNotification(
         "Não foi possível ativar a tela cheia.",
+        "warning"
+      );
+    }
+  }
+
+  async function togglePictureInPicture() {
+    const pipDocument =
+      document as PictureInPictureDocument;
+
+    const video =
+      pictureInPictureVideoRef.current as
+        | PictureInPictureVideoElement
+        | null;
+
+    if (!video) {
+      addNotification(
+        "A miniatura de vídeo ainda não está pronta.",
+        "warning"
+      );
+      return;
+    }
+
+    try {
+      if (
+        pipDocument.pictureInPictureElement
+      ) {
+        if (
+          typeof pipDocument.exitPictureInPicture ===
+          "function"
+        ) {
+          await pipDocument.exitPictureInPicture();
+        }
+
+        setIsPictureInPicture(
+          false
+        );
+        return;
+      }
+
+      if (
+        !pipDocument.pictureInPictureEnabled ||
+        typeof video.requestPictureInPicture !==
+          "function"
+      ) {
+        addNotification(
+          "Este navegador não oferece miniatura Picture-in-Picture para a câmera.",
+          "warning"
+        );
+        return;
+      }
+
+      const cameraStream =
+        mediaStreamRef.current;
+
+      const cameraTrack =
+        cameraStream
+          ?.getVideoTracks()[0];
+
+      if (
+        !cameraStream ||
+        !cameraTrack ||
+        !cameraTrack.enabled
+      ) {
+        addNotification(
+          "Ligue a câmera antes de ativar a miniatura.",
+          "warning"
+        );
+        return;
+      }
+
+      if (
+        video.srcObject !==
+        cameraStream
+      ) {
+        video.srcObject =
+          cameraStream;
+      }
+
+      await video.play();
+      await video.requestPictureInPicture();
+
+      setIsPictureInPicture(
+        true
+      );
+
+      addNotification(
+        "Miniatura ativada. Você pode trocar de aba ou aplicativo sem sair da reunião.",
+        "success"
+      );
+    } catch (error) {
+      console.error(
+        "Erro ao ativar Picture-in-Picture:",
+        error
+      );
+
+      addNotification(
+        "Não foi possível ativar a miniatura de vídeo neste navegador.",
         "warning"
       );
     }
@@ -2926,6 +3193,13 @@ export default function MeetingRoom({
             stream;
         }
 
+        if (
+          pictureInPictureVideoRef.current
+        ) {
+          pictureInPictureVideoRef.current.srcObject =
+            stream;
+        }
+
         const audioTrack =
           stream
             .getAudioTracks()[0];
@@ -3052,6 +3326,15 @@ export default function MeetingRoom({
           setIsHost(
             confirmedIsHost === true
           );
+
+          if (
+            confirmedIsHost === true
+          ) {
+            persistHostResumeSessionId(
+              roomId,
+              participantSessionId
+            );
+          }
         }
       );
 
@@ -4217,6 +4500,13 @@ export default function MeetingRoom({
           meetingReport
         );
 
+      // Em navegadores móveis que ignoram o atributo download
+      // para Blob URLs, target=_blank impede que a reunião seja
+      // substituída pelo PDF na mesma aba.
+      link.target = "_blank";
+      link.rel =
+        "noopener noreferrer";
+
       document.body.appendChild(
         link
       );
@@ -4230,11 +4520,11 @@ export default function MeetingRoom({
             objectUrl
           );
         },
-        1500
+        60000
       );
 
       addNotification(
-        "PDF do relatório baixado.",
+        "PDF aberto/baixado sem sair da reunião.",
         "success"
       );
     } catch (error) {
@@ -4251,6 +4541,19 @@ export default function MeetingRoom({
   }
 
   function leaveMeeting() {
+    const pipDocument =
+      document as PictureInPictureDocument;
+
+    if (
+      pipDocument.pictureInPictureElement &&
+      typeof pipDocument.exitPictureInPicture ===
+        "function"
+    ) {
+      void pipDocument.exitPictureInPicture().catch(
+        () => {}
+      );
+    }
+
     stopTranscription(
       true
     );
@@ -4297,8 +4600,8 @@ export default function MeetingRoom({
 
   const multiParticipantGridClass =
     totalVisibleParticipants <= 4
-      ? "grid-cols-1 sm:grid-cols-2"
-      : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+      ? "grid-cols-2 grid-rows-2"
+      : "grid-cols-2 grid-rows-3 sm:grid-cols-3 sm:grid-rows-2";
 
   const sidePanelOpen =
     isChatOpen ||
@@ -4312,6 +4615,16 @@ export default function MeetingRoom({
 
   return (
     <main className="relative min-h-[100dvh] overflow-x-hidden bg-[#05070d] text-white">
+      <video
+        ref={
+          pictureInPictureVideoRef
+        }
+        autoPlay
+        playsInline
+        muted
+        aria-hidden="true"
+        className="pointer-events-none fixed -left-[9999px] top-0 h-2 w-2 opacity-0"
+      />
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-32 -top-32 h-80 w-80 rounded-full bg-blue-500/15 blur-3xl" />
 
@@ -4477,7 +4790,7 @@ export default function MeetingRoom({
                 className={
                   isFullscreenLayout
                     ? "relative h-full w-full bg-black"
-                    : "relative aspect-video min-h-[260px] w-full bg-black sm:min-h-[420px] lg:min-h-[540px]"
+                    : "relative h-[68dvh] min-h-[380px] max-h-[680px] w-full bg-black sm:aspect-video sm:h-auto sm:min-h-[420px] sm:max-h-none lg:min-h-[540px]"
                 }
               >
                 {remoteParticipants.length === 0 ? (
@@ -4559,7 +4872,7 @@ export default function MeetingRoom({
                     </div>
                   </>
                 ) : useOneToOneLayout ? (
-                  <>
+                  <div className="grid h-full w-full grid-rows-2 gap-2 p-2 sm:block sm:p-0">
                     {remoteParticipants.map(
                       (participant) => {
                         const videoAvailable =
@@ -4576,7 +4889,7 @@ export default function MeetingRoom({
                             key={
                               participant.participantId
                             }
-                            className="absolute inset-0"
+                            className="relative min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black sm:absolute sm:inset-0 sm:rounded-none sm:border-0"
                           >
                             <video
                               ref={
@@ -4654,13 +4967,13 @@ export default function MeetingRoom({
                     )}
 
                     <div
-                      className={`absolute z-30 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl ${
+                      className={`relative z-30 h-full w-full overflow-hidden rounded-xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl sm:absolute sm:h-auto sm:rounded-2xl ${
                         isFullscreenLayout
-                          ? "bottom-5 right-5 w-[24vw] min-w-[170px] max-w-[360px]"
-                          : "bottom-3 right-3 w-[30%] min-w-[120px] max-w-[280px] sm:bottom-5 sm:right-5 sm:w-[26%]"
+                          ? "sm:bottom-5 sm:right-5 sm:w-[24vw] sm:min-w-[170px] sm:max-w-[360px]"
+                          : "sm:bottom-5 sm:right-5 sm:w-[26%] sm:min-w-[120px] sm:max-w-[280px]"
                       }`}
                     >
-                      <div className="relative aspect-video w-full overflow-hidden bg-black">
+                      <div className="relative h-full w-full overflow-hidden bg-black sm:aspect-video sm:h-auto">
                         <video
                           ref={
                             attachLocalVideo
@@ -4718,12 +5031,12 @@ export default function MeetingRoom({
                         </div>
                       </div>
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <div
-                    className={`grid h-full w-full gap-2 overflow-y-auto p-2 sm:p-3 ${multiParticipantGridClass}`}
+                    className={`grid h-full w-full gap-2 overflow-hidden p-2 sm:p-3 ${multiParticipantGridClass}`}
                   >
-                    <div className="relative min-h-[180px] overflow-hidden rounded-2xl border border-white/10 bg-black sm:min-h-[220px]">
+                    <div className="relative min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black sm:rounded-2xl">
                       <video
                         ref={
                           attachLocalVideo
@@ -4797,7 +5110,7 @@ export default function MeetingRoom({
                             key={
                               participant.participantId
                             }
-                            className="relative min-h-[180px] overflow-hidden rounded-2xl border border-white/10 bg-black sm:min-h-[220px]"
+                            className="relative min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black sm:rounded-2xl"
                           >
                             <video
                               ref={
@@ -4948,6 +5261,26 @@ export default function MeetingRoom({
                   {isScreenSharing
                     ? "Parar tela"
                     : "Compartilhar"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void togglePictureInPicture()
+                }
+                className={`${controlButton} ${
+                  isPictureInPicture
+                    ? "border-cyan-300/25 bg-cyan-500/25"
+                    : "border-cyan-400/15 bg-cyan-500/10"
+                }`}
+              >
+                📺
+
+                <span className="hidden sm:inline">
+                  {isPictureInPicture
+                    ? "Fechar miniatura"
+                    : "Miniatura"}
                 </span>
               </button>
 
