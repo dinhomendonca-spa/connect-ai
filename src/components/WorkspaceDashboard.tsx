@@ -43,6 +43,36 @@ type FolderModalState = {
   parentFolderId: string | null;
 };
 
+type SupabaseErrorLike = {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
+
+function logSupabaseWarning(
+  label: string,
+  error: unknown
+) {
+  const supabaseError =
+    error as SupabaseErrorLike;
+
+  console.warn(label, {
+    message:
+      supabaseError?.message ||
+      "Erro sem mensagem",
+    code:
+      supabaseError?.code ||
+      "sem código",
+    details:
+      supabaseError?.details ||
+      "sem detalhes",
+    hint:
+      supabaseError?.hint ||
+      "sem dica",
+  });
+}
+
 function formatDate(
   value: string | null
 ) {
@@ -203,6 +233,13 @@ export default function WorkspaceDashboard() {
           userError ||
           !userData.user
         ) {
+          if (userError) {
+            logSupabaseWarning(
+              "Erro ao carregar usuário:",
+              userError
+            );
+          }
+
           router.replace("/");
           setIsLoading(false);
 
@@ -266,10 +303,12 @@ export default function WorkspaceDashboard() {
         if (
           foldersResult.error
         ) {
-          console.error(
+          logSupabaseWarning(
             "Erro ao carregar pastas:",
             foldersResult.error
           );
+
+          setFolders([]);
 
           setActionError(
             "Não foi possível carregar suas pastas."
@@ -284,10 +323,12 @@ export default function WorkspaceDashboard() {
         if (
           meetingsResult.error
         ) {
-          console.error(
+          logSupabaseWarning(
             "Erro ao carregar reuniões:",
             meetingsResult.error
           );
+
+          setMeetings([]);
         } else {
           setMeetings(
             (meetingsResult.data ||
@@ -555,7 +596,7 @@ export default function WorkspaceDashboard() {
 
       await loadWorkspace();
     } catch (error) {
-      console.error(
+      logSupabaseWarning(
         "Erro ao salvar pasta:",
         error
       );
@@ -596,7 +637,7 @@ export default function WorkspaceDashboard() {
         );
 
     if (error) {
-      console.error(
+      logSupabaseWarning(
         "Erro ao excluir pasta:",
         error
       );

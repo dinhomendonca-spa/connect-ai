@@ -20,6 +20,16 @@ type ProfileForm = {
   interests: string[];
 };
 
+type PublicProfile = {
+  id: string;
+  name: string;
+  headline: string | null;
+  bio: string | null;
+  location: string | null;
+  interests: string[] | null;
+  avatar_url: string | null;
+};
+
 const availableInterests = [
   "Desenvolvimento",
   "Inteligência Artificial",
@@ -33,7 +43,8 @@ const availableInterests = [
   "Freelancer",
 ];
 
-const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
+const MAX_AVATAR_SIZE =
+  5 * 1024 * 1024;
 
 const ALLOWED_AVATAR_TYPES = [
   "image/jpeg",
@@ -41,31 +52,40 @@ const ALLOWED_AVATAR_TYPES = [
   "image/webp",
 ];
 
-function getInitials(name: string) {
+function getInitials(
+  name: string
+) {
   const parts = name
     .trim()
     .split(/\s+/)
     .filter(Boolean);
 
-  if (parts.length === 0) {
+  if (
+    parts.length === 0
+  ) {
     return "U";
   }
 
-  if (parts.length === 1) {
+  if (
+    parts.length === 1
+  ) {
     return parts[0]
       .slice(0, 2)
       .toUpperCase();
   }
 
   return `${parts[0][0]}${
-    parts[parts.length - 1][0]
+    parts[
+      parts.length - 1
+    ][0]
   }`.toUpperCase();
 }
 
 function readMetadataString(
   value: unknown
 ) {
-  return typeof value === "string"
+  return typeof value ===
+    "string"
     ? value
     : "";
 }
@@ -78,23 +98,57 @@ function readMetadataInterests(
   }
 
   return value.filter(
-    (item): item is string =>
-      typeof item === "string"
+    (
+      item
+    ): item is string =>
+      typeof item ===
+      "string"
   );
 }
 
 function getFileExtension(
   file: File
 ) {
-  if (file.type === "image/png") {
+  if (
+    file.type ===
+    "image/png"
+  ) {
     return "png";
   }
 
-  if (file.type === "image/webp") {
+  if (
+    file.type ===
+    "image/webp"
+  ) {
     return "webp";
   }
 
   return "jpg";
+}
+
+function getErrorMessage(
+  error: unknown
+) {
+  if (
+    error &&
+    typeof error ===
+      "object" &&
+    "message" in error &&
+    typeof (
+      error as {
+        message?: unknown;
+      }
+    ).message ===
+      "string"
+  ) {
+    return (
+      error as {
+        message: string;
+      }
+    ).message;
+  }
+
+  return String(error);
 }
 
 export default function PerfilPage() {
@@ -126,9 +180,10 @@ export default function PerfilPage() {
   const [
     avatarFile,
     setAvatarFile,
-  ] = useState<File | null>(
-    null
-  );
+  ] =
+    useState<File | null>(
+      null
+    );
 
   const [
     avatarPreview,
@@ -161,28 +216,112 @@ export default function PerfilPage() {
     setFeedback,
   ] = useState("");
 
+  const [
+    feedbackType,
+    setFeedbackType,
+  ] = useState<
+    "success" | "error" | ""
+  >("");
+
   useEffect(() => {
     let active = true;
 
     async function loadProfile() {
+      setIsLoading(true);
+
       const {
-        data,
-        error,
+        data: authData,
+        error: authError,
       } =
         await supabase.auth.getUser();
 
       if (
-        !active ||
-        error ||
-        !data.user
+        !active
       ) {
-        setIsLoading(false);
         return;
       }
 
+      if (
+        authError ||
+        !authData.user
+      ) {
+        if (authError) {
+          console.warn(
+            "Erro ao carregar usuário:",
+            {
+              message:
+                authError.message,
+            }
+          );
+        }
+
+        setFeedback(
+          "Não foi possível carregar seu usuário."
+        );
+
+        setFeedbackType(
+          "error"
+        );
+
+        setIsLoading(false);
+
+        return;
+      }
+
+      const user =
+        authData.user;
+
       const metadata =
-        data.user.user_metadata ||
+        user.user_metadata ||
         {};
+
+      setUserId(
+        user.id
+      );
+
+      setEmail(
+        user.email || ""
+      );
+
+      const {
+        data: profileData,
+        error: profileError,
+      } =
+        await supabase
+          .from("profiles")
+          .select(
+            "id, name, headline, bio, location, interests, avatar_url"
+          )
+          .eq(
+            "id",
+            user.id
+          )
+          .maybeSingle();
+
+      if (!active) {
+        return;
+      }
+
+      if (
+        profileError
+      ) {
+        console.warn(
+          "Erro ao carregar perfil público:",
+          {
+            message:
+              profileError.message,
+            code:
+              profileError.code,
+            details:
+              profileError.details,
+            hint:
+              profileError.hint,
+          }
+        );
+      }
+
+      const publicProfile =
+        profileData as PublicProfile | null;
 
       const metadataName =
         readMetadataString(
@@ -190,55 +329,81 @@ export default function PerfilPage() {
         ).trim();
 
       const fallbackName =
-        data.user.email
+        user.email
           ?.split("@")[0] ||
         "Usuário";
 
-      setUserId(
-        data.user.id
-      );
+      const loadedName =
+        publicProfile?.name?.trim() ||
+        metadataName ||
+        fallbackName;
 
-      setEmail(
-        data.user.email || ""
-      );
+      const loadedHeadline =
+        publicProfile
+          ?.headline ??
+        readMetadataString(
+          metadata.headline
+        );
 
-      setAvatarUrl(
+      const loadedBio =
+        publicProfile?.bio ??
+        readMetadataString(
+          metadata.bio
+        );
+
+      const loadedLocation =
+        publicProfile
+          ?.location ??
+        readMetadataString(
+          metadata.location
+        );
+
+      const loadedInterests =
+        Array.isArray(
+          publicProfile?.interests
+        )
+          ? publicProfile
+              ?.interests || []
+          : readMetadataInterests(
+              metadata.interests
+            );
+
+      const loadedAvatar =
+        publicProfile
+          ?.avatar_url ||
         readMetadataString(
           metadata.avatar_url
-        )
-      );
+        );
 
-      setAvatarPath(
+      const loadedAvatarPath =
         readMetadataString(
           metadata.avatar_path
-        )
-      );
+        );
 
       setForm({
         name:
-          metadataName ||
-          fallbackName,
+          loadedName,
 
         headline:
-          readMetadataString(
-            metadata.headline
-          ),
+          loadedHeadline,
 
         bio:
-          readMetadataString(
-            metadata.bio
-          ),
+          loadedBio,
 
         location:
-          readMetadataString(
-            metadata.location
-          ),
+          loadedLocation,
 
         interests:
-          readMetadataInterests(
-            metadata.interests
-          ),
+          loadedInterests,
       });
+
+      setAvatarUrl(
+        loadedAvatar
+      );
+
+      setAvatarPath(
+        loadedAvatarPath
+      );
 
       setIsLoading(false);
     }
@@ -252,13 +417,17 @@ export default function PerfilPage() {
 
   useEffect(() => {
     return () => {
-      if (avatarPreview) {
+      if (
+        avatarPreview
+      ) {
         URL.revokeObjectURL(
           avatarPreview
         );
       }
     };
-  }, [avatarPreview]);
+  }, [
+    avatarPreview,
+  ]);
 
   const initials =
     useMemo(
@@ -267,12 +436,19 @@ export default function PerfilPage() {
           form.name ||
             "Usuário"
         ),
-      [form.name]
+      [
+        form.name,
+      ]
     );
 
   const displayedAvatar =
     avatarPreview ||
     avatarUrl;
+
+  function clearFeedback() {
+    setFeedback("");
+    setFeedbackType("");
+  }
 
   function updateField(
     field:
@@ -289,7 +465,7 @@ export default function PerfilPage() {
       })
     );
 
-    setFeedback("");
+    clearFeedback();
   }
 
   function toggleInterest(
@@ -297,7 +473,7 @@ export default function PerfilPage() {
   ) {
     setForm(
       (current) => {
-        const alreadySelected =
+        const selected =
           current.interests.includes(
             interest
           );
@@ -306,7 +482,7 @@ export default function PerfilPage() {
           ...current,
 
           interests:
-            alreadySelected
+            selected
               ? current.interests.filter(
                   (item) =>
                     item !==
@@ -320,20 +496,21 @@ export default function PerfilPage() {
       }
     );
 
-    setFeedback("");
+    clearFeedback();
   }
 
   function handleAvatarChange(
     event: ChangeEvent<HTMLInputElement>
   ) {
     const file =
-      event.target.files?.[0];
+      event.target
+        .files?.[0];
 
     if (!file) {
       return;
     }
 
-    setFeedback("");
+    clearFeedback();
 
     if (
       !ALLOWED_AVATAR_TYPES.includes(
@@ -344,7 +521,13 @@ export default function PerfilPage() {
         "Escolha uma imagem JPG, PNG ou WEBP."
       );
 
-      event.target.value = "";
+      setFeedbackType(
+        "error"
+      );
+
+      event.target.value =
+        "";
+
       return;
     }
 
@@ -356,20 +539,33 @@ export default function PerfilPage() {
         "A foto deve ter no máximo 5 MB."
       );
 
-      event.target.value = "";
+      setFeedbackType(
+        "error"
+      );
+
+      event.target.value =
+        "";
+
       return;
     }
 
-    if (avatarPreview) {
+    if (
+      avatarPreview
+    ) {
       URL.revokeObjectURL(
         avatarPreview
       );
     }
 
     const previewUrl =
-      URL.createObjectURL(file);
+      URL.createObjectURL(
+        file
+      );
 
-    setAvatarFile(file);
+    setAvatarFile(
+      file
+    );
+
     setAvatarPreview(
       previewUrl
     );
@@ -381,8 +577,10 @@ export default function PerfilPage() {
       !userId
     ) {
       return {
-        url: avatarUrl,
-        path: avatarPath,
+        url:
+          avatarUrl,
+        path:
+          avatarPath,
       };
     }
 
@@ -395,7 +593,8 @@ export default function PerfilPage() {
       `${userId}/avatar-${Date.now()}.${extension}`;
 
     const {
-      error: uploadError,
+      error:
+        uploadError,
     } =
       await supabase.storage
         .from("avatars")
@@ -403,17 +602,23 @@ export default function PerfilPage() {
           newPath,
           avatarFile,
           {
-            cacheControl: "3600",
-            upsert: false,
+            cacheControl:
+              "3600",
+
+            upsert:
+              false,
           }
         );
 
-    if (uploadError) {
+    if (
+      uploadError
+    ) {
       throw uploadError;
     }
 
     const {
-      data: publicUrlData,
+      data:
+        publicUrlData,
     } =
       supabase.storage
         .from("avatars")
@@ -426,26 +631,40 @@ export default function PerfilPage() {
 
     if (
       avatarPath &&
-      avatarPath !== newPath
+      avatarPath !==
+        newPath
     ) {
-      await supabase.storage
-        .from("avatars")
-        .remove([
-          avatarPath,
-        ])
-        .catch(
-          (error) => {
-            console.error(
-              "Não foi possível remover o avatar anterior:",
-              error
-            );
+      const {
+        error:
+          removeError,
+      } =
+        await supabase.storage
+          .from(
+            "avatars"
+          )
+          .remove([
+            avatarPath,
+          ]);
+
+      if (
+        removeError
+      ) {
+        console.warn(
+          "Não foi possível remover o avatar anterior:",
+          {
+            message:
+              removeError.message,
           }
         );
+      }
     }
 
     return {
-      url: newUrl,
-      path: newPath,
+      url:
+        newUrl,
+
+      path:
+        newPath,
     };
   }
 
@@ -456,34 +675,107 @@ export default function PerfilPage() {
 
     if (
       !form.name.trim() ||
+      !userId ||
       isSaving
     ) {
       return;
     }
 
     setIsSaving(true);
-    setFeedback("");
+
+    clearFeedback();
 
     try {
+      const normalizedName =
+        form.name.trim();
+
+      const normalizedHeadline =
+        form.headline.trim();
+
+      const normalizedBio =
+        form.bio.trim();
+
+      const normalizedLocation =
+        form.location.trim();
+
       const uploadedAvatar =
         await uploadAvatar();
 
+      /*
+       * Atualiza primeiro o perfil público.
+       * É este registro que a Social e
+       * /perfil/[id] enxergam.
+       */
       const {
-        error,
+        data:
+          updatedProfile,
+        error:
+          profileError,
+      } =
+        await supabase
+          .from("profiles")
+          .update({
+            name:
+              normalizedName,
+
+            headline:
+              normalizedHeadline ||
+              null,
+
+            bio:
+              normalizedBio ||
+              null,
+
+            location:
+              normalizedLocation ||
+              null,
+
+            interests:
+              form.interests,
+
+            avatar_url:
+              uploadedAvatar.url ||
+              null,
+          })
+          .eq(
+            "id",
+            userId
+          )
+          .select(
+            "id, name, headline, bio, location, interests, avatar_url"
+          )
+          .single();
+
+      if (
+        profileError
+      ) {
+        throw new Error(
+          `Não foi possível atualizar o perfil público: ${profileError.message}`
+        );
+      }
+
+      /*
+       * Também mantém o metadata do Auth
+       * sincronizado para outras partes
+       * já existentes da ConnectAI.
+       */
+      const {
+        error:
+          authUpdateError,
       } =
         await supabase.auth.updateUser({
           data: {
             name:
-              form.name.trim(),
+              normalizedName,
 
             headline:
-              form.headline.trim(),
+              normalizedHeadline,
 
             bio:
-              form.bio.trim(),
+              normalizedBio,
 
             location:
-              form.location.trim(),
+              normalizedLocation,
 
             interests:
               form.interests,
@@ -496,11 +788,40 @@ export default function PerfilPage() {
           },
         });
 
-      if (error) {
-        throw error;
+      if (
+        authUpdateError
+      ) {
+        throw new Error(
+          `O perfil público foi salvo, mas os dados da conta não foram sincronizados: ${authUpdateError.message}`
+        );
       }
 
+      const savedProfile =
+        updatedProfile as PublicProfile;
+
+      setForm({
+        name:
+          savedProfile.name,
+
+        headline:
+          savedProfile.headline ||
+          "",
+
+        bio:
+          savedProfile.bio ||
+          "",
+
+        location:
+          savedProfile.location ||
+          "",
+
+        interests:
+          savedProfile.interests ||
+          [],
+      });
+
       setAvatarUrl(
+        savedProfile.avatar_url ||
         uploadedAvatar.url
       );
 
@@ -508,15 +829,21 @@ export default function PerfilPage() {
         uploadedAvatar.path
       );
 
-      setAvatarFile(null);
+      setAvatarFile(
+        null
+      );
 
-      if (avatarPreview) {
+      if (
+        avatarPreview
+      ) {
         URL.revokeObjectURL(
           avatarPreview
         );
       }
 
-      setAvatarPreview("");
+      setAvatarPreview(
+        ""
+      );
 
       if (
         fileInputRef.current
@@ -526,19 +853,37 @@ export default function PerfilPage() {
       }
 
       setFeedback(
-        "Perfil atualizado com sucesso."
+        "Perfil atualizado com sucesso. Suas informações já estão visíveis na área Social."
+      );
+
+      setFeedbackType(
+        "success"
       );
     } catch (error) {
-      console.error(
+      console.warn(
         "Erro ao salvar perfil:",
-        error
+        {
+          message:
+            getErrorMessage(
+              error
+            ),
+        }
       );
 
       setFeedback(
-        "Não foi possível salvar seu perfil."
+        getErrorMessage(
+          error
+        ) ||
+          "Não foi possível salvar seu perfil."
+      );
+
+      setFeedbackType(
+        "error"
       );
     } finally {
-      setIsSaving(false);
+      setIsSaving(
+        false
+      );
     }
   }
 
@@ -546,13 +891,17 @@ export default function PerfilPage() {
     return (
       <PlatformShell>
         <div className="flex min-h-72 items-center justify-center">
+
           <div className="text-center">
+
             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-white/10 border-t-emerald-400" />
 
             <p className="mt-4 text-sm text-zinc-500">
               Carregando seu perfil...
             </p>
+
           </div>
+
         </div>
       </PlatformShell>
     );
@@ -566,22 +915,29 @@ export default function PerfilPage() {
         }
         className="space-y-5 sm:space-y-6"
       >
+
+        {/* PERFIL / CAPA */}
         <section className="relative overflow-hidden rounded-[1.75rem] border border-emerald-400/15 bg-white/[0.035] shadow-2xl shadow-black/10 backdrop-blur-2xl">
+
           <div className="h-28 bg-gradient-to-r from-emerald-500/20 via-cyan-500/10 to-teal-500/20 sm:h-36" />
 
           <div className="pointer-events-none absolute right-0 top-0 h-44 w-44 rounded-full bg-emerald-400/10 blur-3xl" />
 
           <div className="relative px-4 pb-5 sm:px-6 sm:pb-6">
+
             <div className="-mt-11 flex items-end justify-between gap-3">
+
               <div className="relative">
+
                 <button
                   type="button"
                   onClick={() =>
                     fileInputRef.current?.click()
                   }
-                  className="group relative block h-24 w-24 overflow-hidden rounded-full border-4 border-[#07100d] bg-emerald-500/15 shadow-xl shadow-black/30 sm:h-28 sm:w-28"
+                  className="group relative block h-24 w-24 overflow-hidden rounded-full border-4 border-[#07100d] bg-emerald-500/15 shadow-xl shadow-black/30 transition hover:border-emerald-400/40 sm:h-28 sm:w-28"
                   aria-label="Alterar foto de perfil"
                 >
+
                   {displayedAvatar ? (
                     <img
                       src={
@@ -596,9 +952,10 @@ export default function PerfilPage() {
                     </span>
                   )}
 
-                  <span className="absolute inset-x-0 bottom-0 flex min-h-8 items-center justify-center bg-black/65 px-1 text-[9px] font-semibold text-white backdrop-blur-sm transition sm:text-[10px]">
+                  <span className="absolute inset-x-0 bottom-0 flex min-h-8 items-center justify-center bg-black/65 px-1 text-[9px] font-semibold text-white backdrop-blur-sm sm:text-[10px]">
                     Alterar foto
                   </span>
+
                 </button>
 
                 <span className="absolute bottom-1 right-1 h-4 w-4 rounded-full border-2 border-[#07100d] bg-emerald-400" />
@@ -614,30 +971,43 @@ export default function PerfilPage() {
                   }
                   className="hidden"
                 />
+
               </div>
 
-              <span className="mb-1 rounded-full border border-emerald-400/15 bg-emerald-500/[0.08] px-3 py-1.5 text-[10px] font-semibold text-emerald-300 backdrop-blur-xl">
-                ● Online
+              <span className="mb-1 rounded-full border border-emerald-400/15 bg-emerald-500/[0.08] px-3 py-1.5 text-[10px] font-semibold text-emerald-300">
+                ● Perfil público
               </span>
+
             </div>
 
             <div className="mt-4">
+
               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-400">
                 Meu Perfil
               </p>
 
-              <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              <h1 className="mt-1 text-2xl font-bold tracking-tight text-white sm:text-3xl">
                 {form.name ||
                   "Seu perfil"}
               </h1>
 
               {form.headline ? (
                 <p className="mt-1 text-sm text-zinc-400">
-                  {form.headline}
+                  {
+                    form.headline
+                  }
                 </p>
               ) : (
                 <p className="mt-1 text-sm text-zinc-600">
                   Adicione um título profissional.
+                </p>
+              )}
+
+              {form.location && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  📍 {
+                    form.location
+                  }
                 </p>
               )}
 
@@ -646,37 +1016,44 @@ export default function PerfilPage() {
               </p>
 
               <p className="mt-3 text-[10px] text-zinc-600">
-                Toque na foto para escolher uma imagem. JPG, PNG ou WEBP, até 5 MB.
+                Toque na foto para escolher uma imagem JPG, PNG ou WEBP de até 5 MB.
               </p>
 
               {avatarFile && (
                 <div className="mt-3 flex items-center gap-2 rounded-xl border border-cyan-400/15 bg-cyan-500/[0.06] px-3 py-2 text-[10px] text-cyan-200">
+
                   <span>
                     ✓
                   </span>
 
                   <span className="min-w-0 truncate">
-                    Nova foto selecionada. Clique em Salvar perfil para confirmar.
+                    Nova foto selecionada. Salve o perfil para confirmar.
                   </span>
+
                 </div>
               )}
+
             </div>
+
           </div>
+
         </section>
 
+        {/* IDENTIDADE */}
         <section className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-xl sm:p-6">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400">
-              Identidade
-            </p>
 
-            <h2 className="mt-1 text-lg font-bold text-white">
-              Sobre você
-            </h2>
-          </div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400">
+            Identidade
+          </p>
+
+          <h2 className="mt-1 text-lg font-bold text-white">
+            Sobre você
+          </h2>
 
           <div className="mt-5 space-y-4">
+
             <label className="block">
+
               <span className="text-xs font-medium text-zinc-300">
                 Nome
               </span>
@@ -696,11 +1073,13 @@ export default function PerfilPage() {
                 }
                 maxLength={80}
                 placeholder="Seu nome"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30 focus:bg-emerald-500/[0.03]"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30"
               />
+
             </label>
 
             <label className="block">
+
               <span className="text-xs font-medium text-zinc-300">
                 Título profissional
               </span>
@@ -720,12 +1099,15 @@ export default function PerfilPage() {
                 }
                 maxLength={100}
                 placeholder="Ex.: Desenvolvedor Full Stack"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30 focus:bg-emerald-500/[0.03]"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30"
               />
+
             </label>
 
             <label className="block">
+
               <div className="flex items-center justify-between gap-3">
+
                 <span className="text-xs font-medium text-zinc-300">
                   Sobre mim
                 </span>
@@ -736,6 +1118,7 @@ export default function PerfilPage() {
                   }
                   /500
                 </span>
+
               </div>
 
               <textarea
@@ -752,12 +1135,14 @@ export default function PerfilPage() {
                 }
                 maxLength={500}
                 rows={5}
-                placeholder="Conte sobre você, seus interesses, trabalho ou o que procura no ConnectAI."
-                className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base leading-6 text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30 focus:bg-emerald-500/[0.03]"
+                placeholder="Conte sobre você, sua carreira, interesses e projetos."
+                className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base leading-6 text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30"
               />
+
             </label>
 
             <label className="block">
+
               <span className="text-xs font-medium text-zinc-300">
                 Localização
               </span>
@@ -777,30 +1162,36 @@ export default function PerfilPage() {
                 }
                 maxLength={100}
                 placeholder="Ex.: São Paulo, Brasil"
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30 focus:bg-emerald-500/[0.03]"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-base text-white outline-none transition placeholder:text-zinc-600 focus:border-emerald-400/30"
               />
+
             </label>
+
           </div>
+
         </section>
 
+        {/* INTERESSES */}
         <section className="rounded-[1.5rem] border border-white/[0.08] bg-white/[0.025] p-4 backdrop-blur-xl sm:p-6">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400">
-              Afinidades
-            </p>
 
-            <h2 className="mt-1 text-lg font-bold text-white">
-              Seus interesses
-            </h2>
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400">
+            Afinidades
+          </p>
 
-            <p className="mt-1 text-xs leading-5 text-zinc-500">
-              Eles ajudarão o ConnectAI a encontrar pessoas que façam sentido para você.
-            </p>
-          </div>
+          <h2 className="mt-1 text-lg font-bold text-white">
+            Seus interesses
+          </h2>
+
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
+            Essas informações ajudam outras pessoas a encontrar conexões com interesses em comum.
+          </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
+
             {availableInterests.map(
-              (interest) => {
+              (
+                interest
+              ) => {
                 const selected =
                   form.interests.includes(
                     interest
@@ -818,9 +1209,9 @@ export default function PerfilPage() {
                       )
                     }
                     className={[
-                      "min-h-10 rounded-full border px-3.5 py-2 text-xs font-medium backdrop-blur-xl transition",
+                      "min-h-10 rounded-full border px-3.5 py-2 text-xs font-medium transition",
                       selected
-                        ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-100 shadow-lg shadow-emerald-500/5"
+                        ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
                         : "border-white/[0.08] bg-white/[0.025] text-zinc-400 hover:bg-white/[0.05] hover:text-white",
                     ].join(
                       " "
@@ -829,31 +1220,39 @@ export default function PerfilPage() {
                     {selected
                       ? "✓ "
                       : ""}
-                    {interest}
+                    {
+                      interest
+                    }
                   </button>
                 );
               }
             )}
+
           </div>
+
         </section>
 
+        {/* SALVAR */}
         <section className="pb-6">
-          <div className="rounded-[1.5rem] border border-emerald-400/10 bg-emerald-500/[0.035] p-4 backdrop-blur-xl sm:p-5">
+
+          <div className="rounded-[1.5rem] border border-emerald-400/10 bg-emerald-500/[0.035] p-4 sm:p-5">
+
             {feedback && (
-              <p
+              <div
                 className={[
-                  "mb-3 rounded-xl border px-3 py-2.5 text-xs",
-                  feedback.includes(
-                    "sucesso"
-                  )
+                  "mb-4 rounded-xl border px-4 py-3 text-xs leading-5",
+                  feedbackType ===
+                  "success"
                     ? "border-emerald-400/15 bg-emerald-500/10 text-emerald-200"
                     : "border-red-400/15 bg-red-500/10 text-red-200",
                 ].join(
                   " "
                 )}
               >
-                {feedback}
-              </p>
+                {
+                  feedback
+                }
+              </div>
             )}
 
             <button
@@ -862,7 +1261,7 @@ export default function PerfilPage() {
                 !form.name.trim() ||
                 isSaving
               }
-              className="flex min-h-14 w-full items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-5 text-sm font-bold text-emerald-50 shadow-[0_12px_35px_rgba(16,185,129,0.10)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex min-h-14 w-full items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-500/15 px-5 text-sm font-bold text-emerald-50 shadow-[0_12px_35px_rgba(16,185,129,0.10)] transition hover:-translate-y-0.5 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSaving
                 ? "Salvando..."
@@ -870,8 +1269,11 @@ export default function PerfilPage() {
                   ? "Salvar perfil e foto"
                   : "Salvar perfil"}
             </button>
+
           </div>
+
         </section>
+
       </form>
     </PlatformShell>
   );
