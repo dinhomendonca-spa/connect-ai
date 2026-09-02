@@ -179,11 +179,18 @@ const PARTICIPANT_SESSION_KEY = "connectai-participant-session";
 const HOST_RESUME_SESSION_KEY = "connectai-host-resume-session";
 const MAX_ROOM_PARTICIPANTS = 6;
 
+// A gravação continua em 720p, mas desenha menos quadros para reduzir
+// a carga de CPU/GPU enquanto a chamada WebRTC continua ativa.
 const RECORDING_WIDTH = 1280;
 const RECORDING_HEIGHT = 720;
-const RECORDING_FPS = 24;
-const RECORDING_VIDEO_BITRATE = 2_000_000;
+const RECORDING_FPS = 20;
+const RECORDING_VIDEO_BITRATE = 1_600_000;
 const RECORDING_AUDIO_BITRATE = 96_000;
+
+const CAMERA_VIDEO_BITRATE = 700_000;
+const SCREEN_VIDEO_BITRATE = 1_600_000;
+const ICE_RESTART_DELAY_MS = 3500;
+const ICE_RESTART_COOLDOWN_MS = 8000;
 
 const DEFAULT_MEDIA_STATUS: MediaStatus = {
   isMicOn: true,
@@ -209,14 +216,8 @@ function formatMeetingDuration(totalSeconds: number): string {
 }
 
 function formatFileSize(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 KB";
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
@@ -239,7 +240,6 @@ function getCurrentUserIdentityKey(): string | null {
 function getHostResumeStorageKey(roomId: string): string | null {
   const identity = getCurrentUserIdentityKey();
   if (!identity) return null;
-
   return `${HOST_RESUME_SESSION_KEY}:${roomId}:${encodeURIComponent(identity)}`;
 }
 
@@ -252,7 +252,7 @@ function persistHostResumeSessionId(
     if (!storageKey) return;
     localStorage.setItem(storageKey, participantSessionId);
   } catch {
-    // Persistência opcional. A reunião continua mesmo sem localStorage.
+    // Persistência opcional.
   }
 }
 
@@ -283,6 +283,38 @@ function getOrCreateParticipantSessionId(roomId: string): string {
   } catch {
     return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
+}
+
+function getRtcIceServers(): RTCIceServer[] {
+  const servers: RTCIceServer[] = [
+    {
+      urls: [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+      ],
+    },
+  ];
+
+  const turnUrl = process.env.NEXT_PUBLIC_TURN_URL?.trim();
+  const turnUsername = process.env.NEXT_PUBLIC_TURN_USERNAME?.trim();
+  const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL?.trim();
+
+  if (turnUrl && turnUsername && turnCredential) {
+    const turnUrls = turnUrl
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (turnUrls.length > 0) {
+      servers.push({
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      });
+    }
+  }
+
+  return servers;
 }
 
 function formatReportDate(timestamp: number): string {
@@ -414,7 +446,6 @@ function wrapPdfText(value: string, maxCharacters: number): string[] {
           result.push(currentLine);
           currentLine = "";
         }
-
         for (let index = 0; index < word.length; index += maxCharacters) {
           result.push(word.slice(index, index + maxCharacters));
         }
@@ -439,16 +470,11 @@ function wrapPdfText(value: string, maxCharacters: number): string[] {
 
 function buildMeetingReportPdfLines(report: MeetingReport): PdfLayoutLine[] {
   const lines: PdfLayoutLine[] = [];
-
-  const addLine = (style: PdfTextStyle, text: string) => {
-    lines.push({ style, text });
-  };
-
+  const addLine = (style: PdfTextStyle, text: string) => lines.push({ style, text });
   const addSection = (title: string, content: string) => {
     addLine("section", title);
     addLine("body", content || "Não definido durante a reunião.");
   };
-
   const addList = (title: string, items: string[]) => {
     addLine("section", title);
     if (items.length === 0) {
@@ -540,13 +566,10 @@ function createMeetingReportPdfBlob(report: MeetingReport): Blob {
     const config = PDF_STYLE_CONFIG[sourceLine.style];
     const wrappedLines = wrapPdfText(sourceLine.text, config.maxCharacters);
 
-    if (config.gapBefore > 0 && currentY < topY) {
-      currentY -= config.gapBefore;
-    }
+    if (config.gapBefore > 0 && currentY < topY) currentY -= config.gapBefore;
 
     wrappedLines.forEach((line) => {
       if (currentY - config.lineHeight < bottomY) addPage();
-
       if (!line) {
         currentY -= config.lineHeight;
         return;
@@ -628,7 +651,6 @@ function getMeetingReportPdfFileName(report: MeetingReport): string {
 
 function getSupportedRecordingMimeType(): string {
   if (typeof MediaRecorder === "undefined") return "";
-
   const candidates = [
     "video/webm;codecs=vp8,opus",
     "video/webm;codecs=vp9,opus",
@@ -636,7 +658,6 @@ function getSupportedRecordingMimeType(): string {
     "video/mp4;codecs=h264,aac",
     "video/mp4",
   ];
-
   return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
 }
 
@@ -719,7 +740,6 @@ function drawRecordingTile(
   const labelHeight = Math.max(34, Math.min(48, height * 0.14));
   context.fillStyle = "rgba(0, 0, 0, 0.68)";
   context.fillRect(x, y + height - labelHeight, width, labelHeight);
-
   context.textAlign = "left";
   context.textBaseline = "middle";
   context.font = `600 ${Math.max(13, Math.min(20, width / 26))}px Arial`;
@@ -749,6 +769,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const previousSocketIdRef = useRef("");
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const pendingIceCandidatesRef = useRef<Map<string, RTCIceCandidateInit[]>>(
     new Map()
@@ -757,6 +778,8 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
   const localMediaStatusRef = useRef<MediaStatus>({ ...DEFAULT_MEDIA_STATUS });
   const remoteMediaStatusRef = useRef<Map<string, MediaStatus>>(new Map());
   const participantNameRef = useRef("");
+  const iceRestartTimersRef = useRef<Map<string, number>>(new Map());
+  const lastIceRestartAtRef = useRef<Map<string, number>>(new Map());
 
   const assemblyWebSocketRef = useRef<WebSocket | null>(null);
   const assemblyAudioContextRef = useRef<AudioContext | null>(null);
@@ -787,7 +810,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const videoStageRef = useRef<HTMLElement>(null);
 
-  // Gravação local da reunião.
+  // Gravação local da reunião. Os streams da chamada nunca são parados aqui.
   const recordingCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingCanvasStreamRef = useRef<MediaStream | null>(null);
   const recordingMediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -798,6 +821,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     new Map()
   );
   const recordingAnimationFrameRef = useRef<number | null>(null);
+  const recordingLastFrameAtRef = useRef(0);
   const recordingAudioSyncTimerRef = useRef<number | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
@@ -918,9 +942,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     }
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
 
   useEffect(() => {
@@ -939,14 +961,8 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     video.addEventListener("leavepictureinpicture", handleLeavePictureInPicture);
 
     return () => {
-      video.removeEventListener(
-        "enterpictureinpicture",
-        handleEnterPictureInPicture
-      );
-      video.removeEventListener(
-        "leavepictureinpicture",
-        handleLeavePictureInPicture
-      );
+      video.removeEventListener("enterpictureinpicture", handleEnterPictureInPicture);
+      video.removeEventListener("leavepictureinpicture", handleLeavePictureInPicture);
     };
   }, []);
 
@@ -980,7 +996,9 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     function updateRecordingTimer() {
       const startedAt = recordingStartedAtRef.current;
       setRecordingSeconds(
-        startedAt > 0 ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0
+        startedAt > 0
+          ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
+          : 0
       );
     }
 
@@ -1148,12 +1166,22 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
         (item) => item.participantId === participant.participantId
       );
 
-      if (existingIndex === -1) return [...current, participant];
+      const next =
+        existingIndex === -1
+          ? [...current, participant]
+          : current.map((item, index) =>
+              index === existingIndex ? { ...item, ...participant } : item
+            );
 
-      const next = [...current];
-      next[existingIndex] = { ...next[existingIndex], ...participant };
+      remoteParticipantsRef.current = next;
       return next;
     });
+  }
+
+  function clearIceRestartTimer(participantId: string) {
+    const timer = iceRestartTimersRef.current.get(participantId);
+    if (typeof timer === "number") window.clearTimeout(timer);
+    iceRestartTimersRef.current.delete(participantId);
   }
 
   function disconnectRecordingAudioSource(key: string) {
@@ -1169,16 +1197,32 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     recordingAudioSourcesRef.current.delete(key);
   }
 
-  function clearRemoteParticipant(participantId: string) {
+  function disposeRemotePeerResources(participantId: string) {
+    clearIceRestartTimer(participantId);
+    lastIceRestartAtRef.current.delete(participantId);
+
     const peerConnection = peerConnectionsRef.current.get(participantId);
-    peerConnection?.close();
+    if (peerConnection) {
+      peerConnection.ontrack = null;
+      peerConnection.onicecandidate = null;
+      peerConnection.onconnectionstatechange = null;
+      peerConnection.oniceconnectionstatechange = null;
+      peerConnection.close();
+    }
+
     peerConnectionsRef.current.delete(participantId);
     pendingIceCandidatesRef.current.delete(participantId);
     remoteMediaStatusRef.current.delete(participantId);
     disconnectRecordingAudioSource(`remote:${participantId}`);
 
     const remoteStream = remoteStreamsRef.current.get(participantId);
-    remoteStream?.getTracks().forEach((track) => track.stop());
+    remoteStream?.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {
+        // Track já encerrada.
+      }
+    });
     remoteStreamsRef.current.delete(participantId);
 
     const videoElement = remoteVideoRefs.current.get(participantId);
@@ -1186,10 +1230,18 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
     remoteVideoRefs.current.delete(participantId);
     remoteVideoRefCallbacks.current.delete(participantId);
+  }
 
-    setRemoteParticipants((current) =>
-      current.filter((participant) => participant.participantId !== participantId)
-    );
+  function clearRemoteParticipant(participantId: string) {
+    disposeRemotePeerResources(participantId);
+
+    setRemoteParticipants((current) => {
+      const next = current.filter(
+        (participant) => participant.participantId !== participantId
+      );
+      remoteParticipantsRef.current = next;
+      return next;
+    });
 
     setRemoteConnectionStates((current) => {
       const next = { ...current };
@@ -1198,16 +1250,78 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     });
   }
 
+  function reconcileRemoteParticipants(nextRemoteParticipants: RoomParticipant[]) {
+    const activeIds = new Set(
+      nextRemoteParticipants.map((participant) => participant.participantId)
+    );
+
+    const knownIds = new Set<string>([
+      ...peerConnectionsRef.current.keys(),
+      ...remoteStreamsRef.current.keys(),
+      ...remoteParticipantsRef.current.map((participant) => participant.participantId),
+    ]);
+
+    knownIds.forEach((participantId) => {
+      if (!activeIds.has(participantId)) {
+        disposeRemotePeerResources(participantId);
+      }
+    });
+
+    Array.from(remoteMediaStatusRef.current.keys()).forEach((participantId) => {
+      if (!activeIds.has(participantId)) {
+        remoteMediaStatusRef.current.delete(participantId);
+      }
+    });
+
+    nextRemoteParticipants.forEach((participant) => {
+      remoteMediaStatusRef.current.set(
+        participant.participantId,
+        participant.mediaStatus
+      );
+    });
+
+    remoteParticipantsRef.current = nextRemoteParticipants;
+    setRemoteParticipants(nextRemoteParticipants);
+
+    setRemoteConnectionStates((current) => {
+      const next: Record<string, boolean> = {};
+      nextRemoteParticipants.forEach((participant) => {
+        next[participant.participantId] =
+          current[participant.participantId] === true;
+      });
+      return next;
+    });
+  }
+
   function closeAllPeerConnections() {
-    peerConnectionsRef.current.forEach((peerConnection) => peerConnection.close());
+    iceRestartTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    iceRestartTimersRef.current.clear();
+    lastIceRestartAtRef.current.clear();
+
+    peerConnectionsRef.current.forEach((peerConnection) => {
+      peerConnection.ontrack = null;
+      peerConnection.onicecandidate = null;
+      peerConnection.onconnectionstatechange = null;
+      peerConnection.oniceconnectionstatechange = null;
+      peerConnection.close();
+    });
     peerConnectionsRef.current.clear();
     pendingIceCandidatesRef.current.clear();
 
     remoteStreamsRef.current.forEach((stream) => {
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // Track já encerrada.
+        }
+      });
     });
 
     remoteStreamsRef.current.clear();
+    remoteVideoRefs.current.forEach((video) => {
+      video.srcObject = null;
+    });
     remoteVideoRefs.current.clear();
     remoteVideoRefCallbacks.current.clear();
     remoteMediaStatusRef.current.clear();
@@ -1228,14 +1342,78 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     }
   }
 
+  function shouldInitiateIceRestart(targetId: string) {
+    const ownSocketId = socketRef.current?.id;
+    if (!ownSocketId) return false;
+    return ownSocketId.localeCompare(targetId) < 0;
+  }
+
+  function scheduleIceRestart(
+    targetId: string,
+    peerConnection: RTCPeerConnection,
+    delay = ICE_RESTART_DELAY_MS
+  ) {
+    if (!shouldInitiateIceRestart(targetId)) return;
+    if (iceRestartTimersRef.current.has(targetId)) return;
+
+    const timer = window.setTimeout(async () => {
+      iceRestartTimersRef.current.delete(targetId);
+
+      const currentPeer = peerConnectionsRef.current.get(targetId);
+      if (currentPeer !== peerConnection) return;
+
+      const state = peerConnection.connectionState;
+      if (state !== "failed" && state !== "disconnected") return;
+
+      const socket = socketRef.current;
+      if (!socket?.connected) return;
+
+      const now = Date.now();
+      const lastRestartAt = lastIceRestartAtRef.current.get(targetId) ?? 0;
+      const elapsed = now - lastRestartAt;
+
+      if (elapsed < ICE_RESTART_COOLDOWN_MS) {
+        scheduleIceRestart(
+          targetId,
+          peerConnection,
+          ICE_RESTART_COOLDOWN_MS - elapsed
+        );
+        return;
+      }
+
+      lastIceRestartAtRef.current.set(targetId, now);
+
+      try {
+        peerConnection.restartIce?.();
+        const offer = await peerConnection.createOffer({ iceRestart: true });
+        await peerConnection.setLocalDescription(offer);
+        socket.emit("webrtc-offer", { targetId, offer });
+        console.log(`♻️ Tentando recuperar WebRTC com ${targetId}`);
+      } catch (error) {
+        console.warn("Não foi possível reiniciar o ICE:", error);
+      }
+    }, Math.max(250, delay));
+
+    iceRestartTimersRef.current.set(targetId, timer);
+  }
+
   function createPeerConnection(targetId: string) {
     const existingPeer = peerConnectionsRef.current.get(targetId);
-    if (existingPeer && existingPeer.connectionState !== "closed") {
+    if (
+      existingPeer &&
+      existingPeer.connectionState !== "closed" &&
+      existingPeer.connectionState !== "failed"
+    ) {
       return existingPeer;
     }
 
+    if (existingPeer) disposeRemotePeerResources(targetId);
+
     const peerConnection = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: getRtcIceServers(),
+      iceTransportPolicy: "all",
+      bundlePolicy: "max-bundle",
+      iceCandidatePoolSize: 4,
     });
 
     peerConnectionsRef.current.set(targetId, peerConnection);
@@ -1254,15 +1432,17 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
     if (activeVideoTrack && activeVideoStream) {
       const videoSender = peerConnection.addTrack(activeVideoTrack, activeVideoStream);
-      void configureVideoSender(videoSender, screenStream ? 1_500_000 : 600_000);
+      void configureVideoSender(
+        videoSender,
+        screenStream ? SCREEN_VIDEO_BITRATE : CAMERA_VIDEO_BITRATE
+      );
     }
 
     peerConnection.ontrack = (event) => {
       let remoteStream = event.streams[0];
 
       if (!remoteStream) {
-        remoteStream =
-          remoteStreamsRef.current.get(targetId) ?? new MediaStream();
+        remoteStream = remoteStreamsRef.current.get(targetId) ?? new MediaStream();
 
         const alreadyHasTrack = remoteStream
           .getTracks()
@@ -1274,16 +1454,12 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       remoteStreamsRef.current.set(targetId, remoteStream);
 
       const videoElement = remoteVideoRefs.current.get(targetId);
-      if (videoElement) videoElement.srcObject = remoteStream;
-
-      setRemoteConnectionStates((current) => ({
-        ...current,
-        [targetId]: true,
-      }));
-
-      if (isRecordingRef.current) {
-        syncRecordingAudioSources();
+      if (videoElement && videoElement.srcObject !== remoteStream) {
+        videoElement.srcObject = remoteStream;
+        void videoElement.play().catch(() => {});
       }
+
+      if (isRecordingRef.current) syncRecordingAudioSources();
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -1296,16 +1472,43 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
     peerConnection.onconnectionstatechange = () => {
       const state = peerConnection.connectionState;
+      const currentPeer = peerConnectionsRef.current.get(targetId);
+      if (currentPeer !== peerConnection) return;
+
+      if (state === "connected") {
+        clearIceRestartTimer(targetId);
+        setRemoteConnectionStates((current) => ({
+          ...current,
+          [targetId]: true,
+        }));
+        return;
+      }
+
       setRemoteConnectionStates((current) => ({
         ...current,
-        [targetId]: state === "connected",
+        [targetId]: false,
       }));
 
-      if (state === "failed" || state === "closed") {
-        const currentPeer = peerConnectionsRef.current.get(targetId);
-        if (currentPeer === peerConnection) {
+      if (state === "disconnected") {
+        scheduleIceRestart(targetId, peerConnection);
+      } else if (state === "failed") {
+        scheduleIceRestart(targetId, peerConnection, 500);
+      } else if (state === "closed") {
+        clearIceRestartTimer(targetId);
+        if (peerConnectionsRef.current.get(targetId) === peerConnection) {
           peerConnectionsRef.current.delete(targetId);
         }
+      }
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      const state = peerConnection.iceConnectionState;
+      if (state === "connected" || state === "completed") {
+        clearIceRestartTimer(targetId);
+      } else if (state === "failed") {
+        scheduleIceRestart(targetId, peerConnection, 500);
+      } else if (state === "disconnected") {
+        scheduleIceRestart(targetId, peerConnection);
       }
     };
 
@@ -1331,7 +1534,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
   async function replaceOutgoingVideoTrack(
     newTrack: MediaStreamTrack,
-    maxBitrate = 600_000
+    maxBitrate = CAMERA_VIDEO_BITRATE
   ) {
     const peerConnections = Array.from(peerConnectionsRef.current.values());
 
@@ -1359,6 +1562,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
     const activeStream = screenStreamRef.current ?? mediaStreamRef.current;
     if (element.srcObject !== activeStream) element.srcObject = activeStream;
+    void element.play().catch(() => {});
   }, []);
 
   const getRemoteVideoRef = useCallback((participantId: string) => {
@@ -1376,6 +1580,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
       if (remoteStream && element.srcObject !== remoteStream) {
         element.srcObject = remoteStream;
+        void element.play().catch(() => {});
       }
     };
 
@@ -1394,7 +1599,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       if (!screenTrack) return;
 
       screenStreamRef.current = screenStream;
-      await replaceOutgoingVideoTrack(screenTrack, 1_500_000);
+      await replaceOutgoingVideoTrack(screenTrack, SCREEN_VIDEO_BITRATE);
 
       if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
 
@@ -1413,7 +1618,9 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     const cameraStream = mediaStreamRef.current;
     const cameraTrack = cameraStream?.getVideoTracks()[0];
 
-    if (cameraTrack) await replaceOutgoingVideoTrack(cameraTrack, 600_000);
+    if (cameraTrack) {
+      await replaceOutgoingVideoTrack(cameraTrack, CAMERA_VIDEO_BITRATE);
+    }
 
     screenStreamRef.current?.getTracks().forEach((track) => {
       track.onended = null;
@@ -1432,7 +1639,6 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       await stopScreenSharing();
       return;
     }
-
     await startScreenSharing();
   }
 
@@ -1515,11 +1721,23 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     return [localTile, ...remoteTiles];
   }
 
-  function renderRecordingFrame() {
+  function renderRecordingFrame(timestamp = performance.now()) {
     if (!isRecordingRef.current) return;
 
+    const frameInterval = 1000 / RECORDING_FPS;
+    const elapsed = timestamp - recordingLastFrameAtRef.current;
+
+    if (elapsed < frameInterval) {
+      recordingAnimationFrameRef.current = window.requestAnimationFrame(
+        renderRecordingFrame
+      );
+      return;
+    }
+
+    recordingLastFrameAtRef.current = timestamp - (elapsed % frameInterval);
+
     const canvas = recordingCanvasRef.current;
-    const context = canvas?.getContext("2d");
+    const context = canvas?.getContext("2d", { alpha: false });
     if (!canvas || !context) return;
 
     const width = canvas.width;
@@ -1539,9 +1757,17 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       } else {
         const railWidth = 280;
         const gap = 8;
-        drawRecordingTile(context, sharingTile, 0, 0, width - railWidth - gap, height);
+        drawRecordingTile(
+          context,
+          sharingTile,
+          0,
+          0,
+          width - railWidth - gap,
+          height
+        );
 
-        const tileHeight = (height - gap * (remaining.length - 1)) / remaining.length;
+        const tileHeight =
+          (height - gap * (remaining.length - 1)) / remaining.length;
         remaining.forEach((tile, index) => {
           drawRecordingTile(
             context,
@@ -1593,7 +1819,6 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       });
     }
 
-    // Marca discreta no vídeo final, sem cobrir o conteúdo da reunião.
     context.save();
     context.fillStyle = "rgba(0,0,0,0.52)";
     context.fillRect(18, 18, 132, 38);
@@ -1609,8 +1834,31 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     );
   }
 
+  function getCallTrackIds() {
+    const ids = new Set<string>();
+
+    mediaStreamRef.current?.getTracks().forEach((track) => ids.add(track.id));
+    screenStreamRef.current?.getTracks().forEach((track) => ids.add(track.id));
+    remoteStreamsRef.current.forEach((stream) => {
+      stream.getTracks().forEach((track) => ids.add(track.id));
+    });
+
+    return ids;
+  }
+
+  function stopRecordingOwnedTrack(track: MediaStreamTrack, callTrackIds: Set<string>) {
+    // Proteção extra: nunca desligar uma track que pertença à chamada WebRTC.
+    if (callTrackIds.has(track.id)) return;
+    try {
+      track.stop();
+    } catch {
+      // Track já encerrada.
+    }
+  }
+
   function cleanupRecordingResources() {
     isRecordingRef.current = false;
+    recordingLastFrameAtRef.current = 0;
 
     if (recordingAnimationFrameRef.current !== null) {
       window.cancelAnimationFrame(recordingAnimationFrameRef.current);
@@ -1631,20 +1879,14 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     });
     recordingAudioSourcesRef.current.clear();
 
+    const callTrackIds = getCallTrackIds();
+
     recordingMediaRecorderRef.current?.stream.getTracks().forEach((track) => {
-      try {
-        track.stop();
-      } catch {
-        // Track já encerrada.
-      }
+      stopRecordingOwnedTrack(track, callTrackIds);
     });
 
     recordingCanvasStreamRef.current?.getTracks().forEach((track) => {
-      try {
-        track.stop();
-      } catch {
-        // Track já encerrada.
-      }
+      stopRecordingOwnedTrack(track, callTrackIds);
     });
 
     recordingCanvasStreamRef.current = null;
@@ -1686,6 +1928,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     );
 
     let result: RecordingResult | null = null;
+    const shouldDownload = recordingDownloadOnStopRef.current;
 
     try {
       const blob = new Blob(chunks, { type: mimeType });
@@ -1710,15 +1953,6 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
       setRecordingResult(result);
       setRecordingError("");
-
-      if (recordingDownloadOnStopRef.current) {
-        downloadRecording(result);
-      }
-
-      addNotification(
-        "Gravação finalizada e salva localmente. Ela já pode ser usada no ConnectAI Studio.",
-        "success"
-      );
     } catch (error) {
       console.error("Erro ao finalizar gravação:", error);
       setRecordingError(
@@ -1727,20 +1961,34 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           : "Não foi possível finalizar a gravação."
       );
       addNotification("Não foi possível finalizar a gravação.", "warning");
-    } finally {
-      cleanupRecordingResources();
-      recordingMediaRecorderRef.current = null;
-      recordingChunksRef.current = [];
-      recordingStartedAtRef.current = 0;
-      recordingMimeTypeRef.current = "";
-      setIsPreparingRecording(false);
-      setIsRecording(false);
-      setRecordingSeconds(0);
-
-      const resolver = recordingStopResolverRef.current;
-      recordingStopResolverRef.current = null;
-      resolver?.(result);
     }
+
+    // Primeiro libera o encoder/canvas/audio da gravação. Só depois dispara o
+    // download, evitando o pico que estava competindo com áudio/vídeo WebRTC.
+    cleanupRecordingResources();
+    recordingMediaRecorderRef.current = null;
+    recordingChunksRef.current = [];
+    recordingStartedAtRef.current = 0;
+    recordingMimeTypeRef.current = "";
+    setIsPreparingRecording(false);
+    setIsRecording(false);
+    setRecordingSeconds(0);
+
+    if (result) {
+      addNotification(
+        "Gravação finalizada e salva localmente. A chamada continua ativa.",
+        "success"
+      );
+
+      if (shouldDownload) {
+        const resultToDownload = result;
+        window.setTimeout(() => downloadRecording(resultToDownload), 250);
+      }
+    }
+
+    const resolver = recordingStopResolverRef.current;
+    recordingStopResolverRef.current = null;
+    resolver?.(result);
   }
 
   async function startMeetingRecording() {
@@ -1796,9 +2044,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       recordingAudioContextRef.current = audioContext;
       recordingAudioDestinationRef.current = audioDestination;
 
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
+      if (audioContext.state === "suspended") await audioContext.resume();
 
       syncRecordingAudioSources();
 
@@ -1821,6 +2067,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       recordingChunksRef.current = [];
       recordingDownloadOnStopRef.current = true;
       recordingStartedAtRef.current = Date.now();
+      recordingLastFrameAtRef.current = 0;
 
       recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -1841,7 +2088,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
       recordingAudioSyncTimerRef.current = window.setInterval(() => {
         syncRecordingAudioSources();
-      }, 1000);
+      }, 1500);
 
       recorder.start(1000);
       setRecordingSeconds(0);
@@ -1849,7 +2096,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       setIsPreparingRecording(false);
 
       addNotification(
-        "Gravação local iniciada. Áudio e vídeo da reunião estão sendo registrados neste dispositivo.",
+        "Gravação local iniciada. A chamada e a gravação usam recursos separados.",
         "success"
       );
     } catch (error) {
@@ -1871,7 +2118,9 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
     }
   }
 
-  function stopMeetingRecording(downloadOnStop = true): Promise<RecordingResult | null> {
+  function stopMeetingRecording(
+    downloadOnStop = true
+  ): Promise<RecordingResult | null> {
     const recorder = recordingMediaRecorderRef.current;
 
     if (!recorder || recorder.state === "inactive") {
@@ -2029,9 +2278,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           assemblyAudioContextRef.current = audioContext;
           await audioContext.audioWorklet.addModule("/assembly-pcm-processor.js");
 
-          if (audioContext.state === "suspended") {
-            await audioContext.resume();
-          }
+          if (audioContext.state === "suspended") await audioContext.resume();
 
           const source = audioContext.createMediaStreamSource(mediaStream);
           const worklet = new AudioWorkletNode(
@@ -2297,16 +2544,66 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
       if (!componentActive) return;
 
-      const socket = io();
+      const socket = io({
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 700,
+        reconnectionDelayMax: 5000,
+        timeout: 12000,
+      });
       socketRef.current = socket;
 
       socket.on("connect", () => {
+        const previousSocketId = previousSocketIdRef.current;
+        const currentSocketId = socket.id || "";
+
+        if (previousSocketId && previousSocketId !== currentSocketId) {
+          closeAllPeerConnections();
+          remoteParticipantsRef.current = [];
+          setRemoteParticipants([]);
+          setRemoteConnectionStates({});
+          addNotification(
+            "Conexão restabelecida. Reconectando áudio e vídeo da reunião...",
+            "success"
+          );
+        }
+
+        previousSocketIdRef.current = currentSocketId;
+
         socket.emit("join-room", {
           roomId,
           participantName: myParticipantName,
           participantSessionId,
           mediaStatus: localMediaStatusRef.current,
         });
+      });
+
+      socket.on("disconnect", (reason) => {
+        setRemoteConnectionStates((current) => {
+          const next: Record<string, boolean> = {};
+          Object.keys(current).forEach((participantId) => {
+            next[participantId] = false;
+          });
+          return next;
+        });
+
+        if (reason !== "io client disconnect") {
+          addNotification(
+            "A conexão oscilou. O ConnectAI tentará reconectar automaticamente.",
+            "warning"
+          );
+        }
+      });
+
+      socket.on("session-replaced", () => {
+        closeAllPeerConnections();
+        remoteParticipantsRef.current = [];
+        setRemoteParticipants([]);
+        setRemoteConnectionStates({});
+        addNotification(
+          "Esta conexão foi substituída por uma conexão mais recente da mesma sessão.",
+          "warning"
+        );
       });
 
       socket.on(
@@ -2354,14 +2651,9 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
             (participant) => participant.participantId !== socket.id
           );
 
-          nextRemoteParticipants.forEach((participant) => {
-            remoteMediaStatusRef.current.set(
-              participant.participantId,
-              participant.mediaStatus
-            );
-          });
-
-          setRemoteParticipants(nextRemoteParticipants);
+          // Fonte de verdade da sala: qualquer peer/socket que não esteja mais
+          // nessa lista é removido imediatamente, evitando quadrados fantasmas.
+          reconcileRemoteParticipants(nextRemoteParticipants);
         }
       );
 
@@ -2440,10 +2732,12 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           if (participants.length === 0) return;
 
           for (const participant of participants) {
+            if (participant.participantId === socket.id) continue;
             upsertRemoteParticipant(participant);
             const peerConnection = createPeerConnection(participant.participantId);
 
             try {
+              if (peerConnection.signalingState !== "stable") continue;
               const offer = await peerConnection.createOffer();
               await peerConnection.setLocalDescription(offer);
               socket.emit("webrtc-offer", {
@@ -2461,11 +2755,9 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       );
 
       socket.on("participant-joined", (participant: RoomParticipant) => {
+        if (participant.participantId === socket.id) return;
         upsertRemoteParticipant(participant);
-        addNotification(
-          `${participant.participantName} entrou na reunião.`,
-          "success"
-        );
+        addNotification(`${participant.participantName} entrou na reunião.`, "success");
       });
 
       socket.on(
@@ -2479,13 +2771,15 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           participantName: string;
           isTranscribing: boolean;
         }) => {
-          setRemoteParticipants((current) =>
-            current.map((participant) =>
+          setRemoteParticipants((current) => {
+            const next = current.map((participant) =>
               participant.participantId === participantId
                 ? { ...participant, isTranscribing: remoteIsTranscribing }
                 : participant
-            )
-          );
+            );
+            remoteParticipantsRef.current = next;
+            return next;
+          });
 
           if (!captionDemandActiveRef.current) {
             addNotification(
@@ -2534,18 +2828,19 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           }
 
           remoteMediaStatusRef.current.set(participantId, mediaStatus);
-          setRemoteParticipants((current) =>
-            current.map((participant) =>
+          setRemoteParticipants((current) => {
+            const next = current.map((participant) =>
               participant.participantId === participantId
                 ? {
                     ...participant,
-                    participantName:
-                      changedName || participant.participantName,
+                    participantName: changedName || participant.participantName,
                     mediaStatus,
                   }
                 : participant
-            )
-          );
+            );
+            remoteParticipantsRef.current = next;
+            return next;
+          });
         }
       );
 
@@ -2560,37 +2855,51 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           senderName: string;
           offer: RTCSessionDescriptionInit;
         }) => {
+          if (!senderId || senderId === socket.id) return;
+
           setRemoteParticipants((current) => {
             const exists = current.some(
               (participant) => participant.participantId === senderId
             );
 
-            if (exists) {
-              return current.map((participant) =>
-                participant.participantId === senderId
-                  ? {
-                      ...participant,
-                      participantName:
-                        senderName || participant.participantName,
-                    }
-                  : participant
-              );
-            }
+            const next = exists
+              ? current.map((participant) =>
+                  participant.participantId === senderId
+                    ? {
+                        ...participant,
+                        participantName:
+                          senderName || participant.participantName,
+                      }
+                    : participant
+                )
+              : [
+                  ...current,
+                  {
+                    participantId: senderId,
+                    participantName: senderName || "Participante",
+                    mediaStatus: { ...DEFAULT_MEDIA_STATUS },
+                    isTranscribing: false,
+                  },
+                ];
 
-            return [
-              ...current,
-              {
-                participantId: senderId,
-                participantName: senderName || "Participante",
-                mediaStatus: { ...DEFAULT_MEDIA_STATUS },
-                isTranscribing: false,
-              },
-            ];
+            remoteParticipantsRef.current = next;
+            return next;
           });
 
           const peerConnection = createPeerConnection(senderId);
 
           try {
+            // Se uma recuperação ICE cruzar com outra oferta, desfazemos apenas
+            // a oferta local pendente e aceitamos a oferta remota mais nova.
+            if (peerConnection.signalingState === "have-local-offer") {
+              try {
+                await peerConnection.setLocalDescription({ type: "rollback" });
+              } catch {
+                // Alguns navegadores não implementam rollback; a tentativa
+                // seguinte ainda poderá ser resolvida por reconexão.
+              }
+            }
+
             await peerConnection.setRemoteDescription(offer);
             await flushPendingIceCandidates(senderId, peerConnection);
             const answer = await peerConnection.createAnswer();
@@ -2614,17 +2923,22 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           answer: RTCSessionDescriptionInit;
         }) => {
           if (senderName) {
-            setRemoteParticipants((current) =>
-              current.map((participant) =>
+            setRemoteParticipants((current) => {
+              const next = current.map((participant) =>
                 participant.participantId === senderId
                   ? { ...participant, participantName: senderName }
                   : participant
-              )
-            );
+              );
+              remoteParticipantsRef.current = next;
+              return next;
+            });
           }
 
           const peerConnection = peerConnectionsRef.current.get(senderId);
           if (!peerConnection) return;
+
+          // Respostas antigas de um socket anterior são ignoradas.
+          if (peerConnection.signalingState !== "have-local-offer") return;
 
           try {
             await peerConnection.setRemoteDescription(answer);
@@ -2644,6 +2958,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           senderId: string;
           candidate: RTCIceCandidateInit;
         }) => {
+          if (!senderId || senderId === socket.id) return;
           const peerConnection = peerConnectionsRef.current.get(senderId);
 
           if (!peerConnection || !peerConnection.remoteDescription) {
@@ -2674,6 +2989,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           participantId: string;
           participantName: string;
         }) => {
+          if (participantId === socket.id) return;
           addNotification(`${leftName} saiu da reunião.`, "danger");
           clearRemoteParticipant(participantId);
         }
@@ -2686,7 +3002,12 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
 
       socket.on(
         "chat-message",
-        ({ id, text, time, senderName }: {
+        ({
+          id,
+          text,
+          time,
+          senderName,
+        }: {
           id: string;
           senderId: string;
           text: string;
@@ -2759,6 +3080,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
       mediaStreamRef.current = null;
       screenStreamRef.current = null;
       socketRef.current = null;
+      previousSocketIdRef.current = "";
     };
   }, [roomId, addNotification, showLiveCaption]);
 
@@ -3361,7 +3683,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                   Gravando localmente • {formatMeetingDuration(recordingSeconds)}
                 </p>
                 <p className="mt-0.5 truncate text-[10px] text-red-200/60 sm:text-xs">
-                  O vídeo não está sendo enviado ao servidor.
+                  A gravação usa um stream separado da chamada.
                 </p>
               </div>
             </div>
@@ -3374,11 +3696,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
           </div>
         )}
 
-        <div
-          className={`grid gap-4 ${
-            sidePanelOpen ? "xl:grid-cols-[1fr_390px]" : ""
-          }`}
-        >
+        <div className={`grid gap-4 ${sidePanelOpen ? "xl:grid-cols-[1fr_390px]" : ""}`}>
           <div className="min-w-0">
             <section
               ref={videoStageRef}
@@ -3473,7 +3791,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                     </div>
                   </>
                 ) : useOneToOneLayout ? (
-                  <div className="grid h-full w-full grid-rows-2 gap-2 p-2 sm:block sm:p-0">
+                  <div className="relative h-full w-full bg-black">
                     {remoteParticipants.map((participant) => {
                       const videoAvailable =
                         participant.mediaStatus.isCameraOn ||
@@ -3484,7 +3802,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                       return (
                         <div
                           key={participant.participantId}
-                          className="relative min-h-0 overflow-hidden rounded-xl border border-white/10 bg-black sm:absolute sm:inset-0 sm:rounded-none sm:border-0"
+                          className="absolute inset-0 overflow-hidden bg-black"
                         >
                           <video
                             ref={getRemoteVideoRef(participant.participantId)}
@@ -3498,7 +3816,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                           {!connected && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950">
                               <div className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-cyan-300" />
-                              <span className="text-sm text-zinc-300">
+                              <span className="px-4 text-center text-sm text-zinc-300">
                                 Conectando com {participant.participantName}...
                               </span>
                             </div>
@@ -3547,13 +3865,13 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                     })}
 
                     <div
-                      className={`relative z-30 h-full w-full overflow-hidden rounded-xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl sm:absolute sm:h-auto sm:rounded-2xl ${
+                      className={`absolute z-30 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl shadow-black/60 backdrop-blur-xl ${
                         isFullscreenLayout
-                          ? "sm:bottom-5 sm:right-5 sm:w-[24vw] sm:min-w-[170px] sm:max-w-[360px]"
-                          : "sm:bottom-5 sm:right-5 sm:w-[26%] sm:min-w-[120px] sm:max-w-[280px]"
+                          ? "bottom-4 right-4 w-[28vw] min-w-[130px] max-w-[320px] sm:bottom-5 sm:right-5 sm:w-[24vw] sm:min-w-[170px] sm:max-w-[360px]"
+                          : "bottom-3 right-3 w-[34%] min-w-[112px] max-w-[210px] sm:bottom-5 sm:right-5 sm:w-[26%] sm:min-w-[120px] sm:max-w-[280px]"
                       }`}
                     >
-                      <div className="relative h-full w-full overflow-hidden bg-black sm:aspect-video sm:h-auto">
+                      <div className="relative aspect-video w-full overflow-hidden bg-black">
                         <video
                           ref={attachLocalVideo}
                           autoPlay
@@ -4034,7 +4352,7 @@ export default function MeetingRoom({ roomId }: MeetingRoomProps) {
                 </div>
 
                 <p className="mt-3 rounded-xl border border-white/[0.07] bg-black/15 px-3 py-2 text-[10px] leading-5 text-zinc-500 sm:text-xs">
-                  Nesta primeira versão, o arquivo é baixado localmente. No Studio, escolha esse arquivo para editar, cortar e exportar em MP4.
+                  O arquivo é baixado localmente sem desligar as tracks da chamada. No Studio, escolha esse arquivo para editar, cortar e exportar em MP4.
                 </p>
               </section>
             )}

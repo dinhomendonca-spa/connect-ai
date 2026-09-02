@@ -235,7 +235,10 @@ function getRoomName(roomId) {
   return `meeting:${roomId}`;
 }
 
-function normalizeParticipantName(name, socketId) {
+function normalizeParticipantName(
+  name,
+  socketId
+) {
   if (typeof name === "string") {
     const normalized = name
       .trim()
@@ -257,7 +260,10 @@ function normalizeParticipantName(name, socketId) {
     : "Participante";
 }
 
-function normalizeParticipantSessionId(value, socketId) {
+function normalizeParticipantSessionId(
+  value,
+  socketId
+) {
   if (typeof value === "string") {
     const normalized = value
       .trim()
@@ -303,21 +309,28 @@ function getRoomTranscript(roomName) {
 }
 
 function cancelRoomCleanup(roomName) {
-  const timer = roomCleanupTimers.get(roomName);
+  const timer =
+    roomCleanupTimers.get(roomName);
 
   if (!timer) {
     return;
   }
 
   clearTimeout(timer);
-  roomCleanupTimers.delete(roomName);
+
+  roomCleanupTimers.delete(
+    roomName
+  );
 }
 
 function scheduleRoomCleanup(roomName) {
   cancelRoomCleanup(roomName);
 
   const timer = setTimeout(() => {
-    const room = io.sockets.adapter.rooms.get(roomName);
+    const room =
+      io.sockets.adapter.rooms.get(
+        roomName
+      );
 
     if (!room || room.size === 0) {
       roomTranscripts.delete(roomName);
@@ -325,21 +338,35 @@ function scheduleRoomCleanup(roomName) {
       roomStartedAt.delete(roomName);
       roomReports.delete(roomName);
       roomReportPromises.delete(roomName);
-      roomCaptionTranslations.delete(roomName);
-      roomCaptionTranslationPromises.delete(roomName);
+
+      roomCaptionTranslations.delete(
+        roomName
+      );
+
+      roomCaptionTranslationPromises.delete(
+        roomName
+      );
     }
 
-    roomCleanupTimers.delete(roomName);
+    roomCleanupTimers.delete(
+      roomName
+    );
   }, 2 * 60 * 60 * 1000);
 
-  roomCleanupTimers.set(roomName, timer);
+  roomCleanupTimers.set(
+    roomName,
+    timer
+  );
 }
 
 function getRoomParticipants(
   roomName,
   excludedSocketId = null
 ) {
-  const room = io.sockets.adapter.rooms.get(roomName);
+  const room =
+    io.sockets.adapter.rooms.get(
+      roomName
+    );
 
   if (!room) {
     return [];
@@ -348,11 +375,14 @@ function getRoomParticipants(
   return Array.from(room)
     .filter(
       (participantId) =>
-        participantId !== excludedSocketId
+        participantId !==
+        excludedSocketId
     )
     .map((participantId) => {
       const participantSocket =
-        io.sockets.sockets.get(participantId);
+        io.sockets.sockets.get(
+          participantId
+        );
 
       if (!participantSocket) {
         return null;
@@ -363,33 +393,41 @@ function getRoomParticipants(
 
         participantName:
           normalizeParticipantName(
-            participantSocket.data.participantName,
+            participantSocket.data
+              .participantName,
             participantId
           ),
 
         mediaStatus:
-          participantSocket.data.mediaStatus ||
+          participantSocket.data
+            .mediaStatus ||
           defaultMediaStatus,
 
         isTranscribing:
-          participantSocket.data.isTranscribing ??
+          participantSocket.data
+            .isTranscribing ??
           false,
 
         isHost:
-          participantSocket.data.isHost === true,
+          participantSocket.data
+            .isHost === true,
       };
     })
     .filter(Boolean);
 }
 
-function broadcastRoomState(roomName) {
+function broadcastRoomState(
+  roomName
+) {
   const participants =
     getRoomParticipants(roomName);
 
   io.to(roomName).emit(
     "room-participants-state",
     {
-      count: participants.length,
+      count:
+        participants.length,
+
       participants,
     }
   );
@@ -397,7 +435,8 @@ function broadcastRoomState(roomName) {
   io.to(roomName).emit(
     "room-participants",
     {
-      count: participants.length,
+      count:
+        participants.length,
     }
   );
 }
@@ -419,7 +458,7 @@ function getCaptionSubscribers(
     .filter(
       (socketId) =>
         socketId !==
-          excludedSocketId
+        excludedSocketId
     )
     .map((socketId) =>
       io.sockets.sockets.get(
@@ -430,8 +469,7 @@ function getCaptionSubscribers(
       (participantSocket) =>
         participantSocket &&
         participantSocket.data
-          .captionEnabled ===
-          true
+          .captionEnabled === true
     );
 }
 
@@ -557,7 +595,8 @@ async function translateCaptionToPortuguese(
     new AbortController();
 
   const timeout = setTimeout(
-    () => controller.abort(),
+    () =>
+      controller.abort(),
     8000
   );
 
@@ -565,25 +604,37 @@ async function translateCaptionToPortuguese(
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
-        method: "POST",
+        method:
+          "POST",
+
         signal:
           controller.signal,
+
         headers: {
           Authorization:
             `Bearer ${apiKey}`,
+
           "Content-Type":
             "application/json",
         },
+
         body: JSON.stringify({
           model,
+
           reasoning_effort:
             "low",
-          temperature: 0,
+
+          temperature:
+            0,
+
           max_completion_tokens:
             700,
+
           messages: [
             {
-              role: "system",
+              role:
+                "system",
+
               content: [
                 "Você é um tradutor profissional de legendas ao vivo.",
                 "Traduza a fala recebida para português do Brasil natural, curto e fiel ao sentido.",
@@ -594,11 +645,16 @@ async function translateCaptionToPortuguese(
               ].join(" "),
             },
             {
-              role: "user",
+              role:
+                "user",
+
               content:
                 String(text || "")
                   .trim()
-                  .slice(0, 3000),
+                  .slice(
+                    0,
+                    3000
+                  ),
             },
           ],
         }),
@@ -693,15 +749,21 @@ async function translateAndEmitCaption(
           return {
             entryId:
               entry.id,
+
             senderId:
               entry.senderId,
+
             senderName:
               entry.senderName,
+
             originalText:
               entry.text,
+
             translatedText,
+
             targetLanguage:
               "pt-BR",
+
             wasTranslated:
               normalizeCaptionComparisonText(
                 translatedText
@@ -709,9 +771,11 @@ async function translateAndEmitCaption(
               normalizeCaptionComparisonText(
                 entry.text
               ),
+
             createdAt:
               entry.createdAt ||
               Date.now(),
+
             translationError:
               false,
           };
@@ -724,21 +788,29 @@ async function translateAndEmitCaption(
           return {
             entryId:
               entry.id,
+
             senderId:
               entry.senderId,
+
             senderName:
               entry.senderName,
+
             originalText:
               entry.text,
+
             translatedText:
               entry.text,
+
             targetLanguage:
               "pt-BR",
+
             wasTranslated:
               false,
+
             createdAt:
               entry.createdAt ||
               Date.now(),
+
             translationError:
               true,
           };
@@ -764,7 +836,9 @@ async function translateAndEmitCaption(
       captionCache.size > 500
     ) {
       const oldestKey =
-        captionCache.keys().next()
+        captionCache
+          .keys()
+          .next()
           .value;
 
       if (oldestKey) {
@@ -791,129 +865,224 @@ async function translateAndEmitCaption(
   }
 }
 
-function formatTranscriptForReport(transcript) {
+function formatTranscriptForReport(
+  transcript
+) {
   return transcript
     .map((entry) => {
-      const time = entry.time || "--:--";
-      const name = entry.senderName || "Participante";
-      const text = String(entry.text || "").trim();
+      const time =
+        entry.time ||
+        "--:--";
+
+      const name =
+        entry.senderName ||
+        "Participante";
+
+      const text =
+        String(
+          entry.text || ""
+        ).trim();
 
       return `[${time}] ${name}: ${text}`;
     })
     .join("\n");
 }
 
-function getReportParticipants(roomName, transcript) {
-  const names = new Set();
+function getReportParticipants(
+  roomName,
+  transcript
+) {
+  const names =
+    new Set();
 
-  for (const entry of transcript) {
+  for (
+    const entry
+    of transcript
+  ) {
     if (entry.senderName) {
-      names.add(String(entry.senderName));
+      names.add(
+        String(
+          entry.senderName
+        )
+      );
     }
   }
 
-  for (const participant of getRoomParticipants(roomName)) {
-    if (participant?.participantName) {
-      names.add(participant.participantName);
+  for (
+    const participant
+    of getRoomParticipants(
+      roomName
+    )
+  ) {
+    if (
+      participant
+        ?.participantName
+    ) {
+      names.add(
+        participant
+          .participantName
+      );
     }
   }
 
-  return Array.from(names);
+  return Array.from(
+    names
+  );
 }
 
-function getMeetingDurationSeconds(roomName, transcript) {
+function getMeetingDurationSeconds(
+  roomName,
+  transcript
+) {
   const startedAt =
-    roomStartedAt.get(roomName) ||
-    transcript[0]?.createdAt ||
+    roomStartedAt.get(
+      roomName
+    ) ||
+    transcript[0]
+      ?.createdAt ||
     Date.now();
 
   const lastTranscriptAt =
-    transcript[transcript.length - 1]?.createdAt ||
+    transcript[
+      transcript.length - 1
+    ]?.createdAt ||
     Date.now();
 
-  const endedAt = Math.max(
-    Date.now(),
-    Number(lastTranscriptAt) || 0
-  );
+  const endedAt =
+    Math.max(
+      Date.now(),
+      Number(
+        lastTranscriptAt
+      ) || 0
+    );
 
   return Math.max(
     0,
-    Math.floor((endedAt - startedAt) / 1000)
+    Math.floor(
+      (endedAt -
+        startedAt) /
+        1000
+    )
   );
 }
 
 const meetingReportSchema = {
-  type: "object",
+  type:
+    "object",
+
   properties: {
     title: {
-      type: "string",
+      type:
+        "string",
     },
+
     executiveSummary: {
-      type: "string",
+      type:
+        "string",
     },
+
     topics: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "string",
+        type:
+          "string",
       },
     },
+
     keyPoints: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "string",
+        type:
+          "string",
       },
     },
+
     decisions: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "string",
+        type:
+          "string",
       },
     },
+
     actionItems: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "object",
+        type:
+          "object",
+
         properties: {
           task: {
-            type: "string",
+            type:
+              "string",
           },
+
           owner: {
-            type: "string",
+            type:
+              "string",
           },
+
           deadline: {
-            type: "string",
+            type:
+              "string",
           },
         },
+
         required: [
           "task",
           "owner",
           "deadline",
         ],
-        additionalProperties: false,
+
+        additionalProperties:
+          false,
       },
     },
+
     conversationAnalysis: {
-      type: "object",
+      type:
+        "object",
+
       properties: {
         overview: {
-          type: "string",
+          type:
+            "string",
         },
+
         alignment: {
-          type: "string",
+          type:
+            "string",
         },
+
         divergences: {
-          type: "string",
+          type:
+            "string",
         },
+
         communicationClarity: {
-          type: "string",
+          type:
+            "string",
         },
+
         risksAndAttentionPoints: {
-          type: "array",
+          type:
+            "array",
+
           items: {
-            type: "string",
+            type:
+              "string",
           },
         },
       },
+
       required: [
         "overview",
         "alignment",
@@ -921,34 +1090,52 @@ const meetingReportSchema = {
         "communicationClarity",
         "risksAndAttentionPoints",
       ],
-      additionalProperties: false,
+
+      additionalProperties:
+        false,
     },
+
     clarifications: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "object",
+        type:
+          "object",
+
         properties: {
           topic: {
-            type: "string",
+            type:
+              "string",
           },
+
           explanation: {
-            type: "string",
+            type:
+              "string",
           },
         },
+
         required: [
           "topic",
           "explanation",
         ],
-        additionalProperties: false,
+
+        additionalProperties:
+          false,
       },
     },
+
     unresolvedPoints: {
-      type: "array",
+      type:
+        "array",
+
       items: {
-        type: "string",
+        type:
+          "string",
       },
     },
   },
+
   required: [
     "title",
     "executiveSummary",
@@ -960,11 +1147,17 @@ const meetingReportSchema = {
     "clarifications",
     "unresolvedPoints",
   ],
-  additionalProperties: false,
+
+  additionalProperties:
+    false,
 };
 
-async function generateMeetingReport(roomName, roomId) {
-  const apiKey = process.env.GROQ_API_KEY;
+async function generateMeetingReport(
+  roomName,
+  roomId
+) {
+  const apiKey =
+    process.env.GROQ_API_KEY;
 
   if (!apiKey) {
     throw new Error(
@@ -973,21 +1166,27 @@ async function generateMeetingReport(roomName, roomId) {
   }
 
   const transcript = [
-    ...getRoomTranscript(roomName),
+    ...getRoomTranscript(
+      roomName
+    ),
   ].sort(
     (a, b) =>
       (a.createdAt || 0) -
       (b.createdAt || 0)
   );
 
-  if (transcript.length === 0) {
+  if (
+    transcript.length === 0
+  ) {
     throw new Error(
       "Ainda não há transcrição suficiente para gerar o relatório."
     );
   }
 
   const transcriptText =
-    formatTranscriptForReport(transcript);
+    formatTranscriptForReport(
+      transcript
+    );
 
   if (
     transcriptText.length >
@@ -1005,8 +1204,11 @@ async function generateMeetingReport(roomName, roomId) {
     );
 
   const startedAt =
-    roomStartedAt.get(roomName) ||
-    transcript[0]?.createdAt ||
+    roomStartedAt.get(
+      roomName
+    ) ||
+    transcript[0]
+      ?.createdAt ||
     Date.now();
 
   const durationSeconds =
@@ -1022,90 +1224,136 @@ async function generateMeetingReport(roomName, roomId) {
   const controller =
     new AbortController();
 
-  const timeout = setTimeout(
-    () => controller.abort(),
-    90000
-  );
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      90000
+    );
 
   try {
-    const groqResponse = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
-      {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          reasoning_effort: "medium",
-          temperature: 0.2,
-          messages: [
-            {
-              role: "system",
-              content: [
-                "Você é um analista profissional de reuniões.",
-                "Crie o relatório exclusivamente a partir da transcrição fornecida.",
-                "Nunca invente fatos, decisões, responsáveis, prazos ou intenções.",
-                "Quando algo não estiver definido, escreva exatamente: Não definido durante a reunião.",
-                "Diferencie claramente fatos discutidos, decisões tomadas e pontos pendentes.",
-                "Em análise da conversa, descreva apenas aspectos observáveis da comunicação, como clareza, alinhamento, divergências e pontos de atenção.",
-                "Não faça diagnósticos, julgamentos de personalidade ou inferências sobre características pessoais dos participantes.",
-                "Escreva todo o conteúdo em português do Brasil, com linguagem profissional, clara e objetiva.",
-              ].join(" "),
-            },
-            {
-              role: "user",
-              content: [
-                `Sala: ${roomId}`,
-                `Participantes: ${
-                  participants.length > 0
-                    ? participants.join(", ")
-                    : "Não definido durante a reunião."
-                }`,
-                `Início: ${new Date(
-                  startedAt
-                ).toLocaleString("pt-BR")}`,
-                `Duração aproximada em segundos: ${durationSeconds}`,
-                "",
-                "TRANSCRIÇÃO COMPLETA:",
-                transcriptText,
-              ].join("\n"),
-            },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "meeting_report",
-              strict: true,
-              schema: meetingReportSchema,
-            },
+    const groqResponse =
+      await fetch(
+        "https://api.groq.com/openai/v1/chat/completions",
+        {
+          method:
+            "POST",
+
+          signal:
+            controller.signal,
+
+          headers: {
+            Authorization:
+              `Bearer ${apiKey}`,
+
+            "Content-Type":
+              "application/json",
           },
-        }),
-      }
-    );
+
+          body:
+            JSON.stringify({
+              model,
+
+              reasoning_effort:
+                "medium",
+
+              temperature:
+                0.2,
+
+              messages: [
+                {
+                  role:
+                    "system",
+
+                  content: [
+                    "Você é um analista profissional de reuniões.",
+                    "Crie o relatório exclusivamente a partir da transcrição fornecida.",
+                    "Nunca invente fatos, decisões, responsáveis, prazos ou intenções.",
+                    "Quando algo não estiver definido, escreva exatamente: Não definido durante a reunião.",
+                    "Diferencie claramente fatos discutidos, decisões tomadas e pontos pendentes.",
+                    "Em análise da conversa, descreva apenas aspectos observáveis da comunicação, como clareza, alinhamento, divergências e pontos de atenção.",
+                    "Não faça diagnósticos, julgamentos de personalidade ou inferências sobre características pessoais dos participantes.",
+                    "Escreva todo o conteúdo em português do Brasil, com linguagem profissional, clara e objetiva.",
+                  ].join(" "),
+                },
+
+                {
+                  role:
+                    "user",
+
+                  content: [
+                    `Sala: ${roomId}`,
+
+                    `Participantes: ${
+                      participants.length >
+                      0
+                        ? participants.join(
+                            ", "
+                          )
+                        : "Não definido durante a reunião."
+                    }`,
+
+                    `Início: ${new Date(
+                      startedAt
+                    ).toLocaleString(
+                      "pt-BR"
+                    )}`,
+
+                    `Duração aproximada em segundos: ${durationSeconds}`,
+
+                    "",
+
+                    "TRANSCRIÇÃO COMPLETA:",
+
+                    transcriptText,
+                  ].join("\n"),
+                },
+              ],
+
+              response_format: {
+                type:
+                  "json_schema",
+
+                json_schema: {
+                  name:
+                    "meeting_report",
+
+                  strict:
+                    true,
+
+                  schema:
+                    meetingReportSchema,
+                },
+              },
+            }),
+        }
+      );
 
     const groqData =
       await groqResponse.json();
 
-    if (!groqResponse.ok) {
+    if (
+      !groqResponse.ok
+    ) {
       console.error(
         "❌ Erro Groq ao gerar relatório:",
         groqData
       );
 
       throw new Error(
-        groqData?.error?.message ||
+        groqData?.error
+          ?.message ||
           "Não foi possível gerar o relatório com a IA."
       );
     }
 
     const content =
-      groqData?.choices?.[0]?.message?.content;
+      groqData?.choices?.[0]
+        ?.message?.content;
 
     if (
-      typeof content !== "string" ||
+      typeof content !==
+        "string" ||
       !content.trim()
     ) {
       throw new Error(
@@ -1114,23 +1362,36 @@ async function generateMeetingReport(roomName, roomId) {
     }
 
     const aiReport =
-      JSON.parse(content);
+      JSON.parse(
+        content
+      );
 
     return {
-      id: `report-${Date.now()}`,
+      id:
+        `report-${Date.now()}`,
+
       roomId,
-      generatedAt: Date.now(),
+
+      generatedAt:
+        Date.now(),
+
       startedAt,
+
       durationSeconds,
+
       participants,
+
       transcriptEntryCount:
         transcript.length,
+
       ...aiReport,
     };
   } catch (error) {
     if (
-      error instanceof Error &&
-      error.name === "AbortError"
+      error instanceof
+        Error &&
+      error.name ===
+        "AbortError"
     ) {
       throw new Error(
         "A geração do relatório demorou demais. Tente novamente."
@@ -1139,7 +1400,9 @@ async function generateMeetingReport(roomName, roomId) {
 
     throw error;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(
+      timeout
+    );
   }
 }
 
@@ -1147,247 +1410,299 @@ async function generateMeetingReport(roomName, roomId) {
 // HTTP
 // ==================================================
 
-const httpServer = createServer(
-  async (req, res) => {
-    try {
-      const requestUrl = new URL(
-        req.url || "/",
-        `http://${req.headers.host || "localhost"}`
-      );
+const httpServer =
+  createServer(
+    async (
+      req,
+      res
+    ) => {
+      try {
+        const requestUrl =
+          new URL(
+            req.url ||
+              "/",
 
-      // ==============================================
-      // SESSÃO PROTEGIDA DO CONNECTAI
-      // ==============================================
-
-      if (
-        requestUrl.pathname ===
-          "/api/connectai-session" &&
-        req.method === "POST"
-      ) {
-        const accessToken =
-          getBearerToken(req);
-
-        if (!accessToken) {
-          sendJson(
-            res,
-            401,
-            {
-              error:
-                "Autenticação obrigatória.",
-            }
+            `http://${
+              req.headers
+                .host ||
+              "localhost"
+            }`
           );
 
-          return;
-        }
+        // ==============================================
+        // SESSÃO PROTEGIDA DO CONNECTAI
+        // ==============================================
 
-        const user =
-          await verifySupabaseAccessToken(
-            accessToken
-          );
+        if (
+          requestUrl.pathname ===
+            "/api/connectai-session" &&
+          req.method ===
+            "POST"
+        ) {
+          const accessToken =
+            getBearerToken(
+              req
+            );
 
-        if (!user) {
-          sendJson(
-            res,
-            401,
-            {
-              error:
-                "Sessão inválida ou expirada.",
-            }
-          );
+          if (
+            !accessToken
+          ) {
+            sendJson(
+              res,
+              401,
+              {
+                error:
+                  "Autenticação obrigatória.",
+              }
+            );
 
-          return;
-        }
-
-        res.setHeader(
-          "Set-Cookie",
-          buildAuthCookie(
-            accessToken
-          )
-        );
-
-        sendJson(
-          res,
-          200,
-          {
-            ok: true,
-            user: {
-              id:
-                user.id,
-              email:
-                user.email || "",
-            },
+            return;
           }
-        );
 
-        return;
-      }
+          const user =
+            await verifySupabaseAccessToken(
+              accessToken
+            );
 
-      if (
-        requestUrl.pathname ===
-          "/api/connectai-session" &&
-        req.method === "DELETE"
-      ) {
-        res.setHeader(
-          "Set-Cookie",
-          buildExpiredAuthCookie()
-        );
+          if (!user) {
+            sendJson(
+              res,
+              401,
+              {
+                error:
+                  "Sessão inválida ou expirada.",
+              }
+            );
 
-        sendJson(
-          res,
-          200,
-          {
-            ok: true,
+            return;
           }
-        );
 
-        return;
-      }
+          res.setHeader(
+            "Set-Cookie",
 
-      // ==============================================
-      // TOKEN TEMPORÁRIO DA ASSEMBLYAI
-      // SOMENTE USUÁRIOS AUTENTICADOS
-      // ==============================================
-
-      if (
-        req.method === "GET" &&
-        requestUrl.pathname ===
-          "/api/assemblyai-token"
-      ) {
-        const authenticatedUser =
-          await getAuthenticatedUserFromRequest(
-            req
+            buildAuthCookie(
+              accessToken
+            )
           );
 
-        if (!authenticatedUser) {
           sendJson(
             res,
-            401,
+            200,
             {
-              error:
-                "Faça login para usar a transcrição.",
+              ok:
+                true,
+
+              user: {
+                id:
+                  user.id,
+
+                email:
+                  user.email ||
+                  "",
+              },
             }
           );
 
           return;
         }
 
-        res.setHeader(
-          "Cache-Control",
-          "no-store, no-cache, must-revalidate"
-        );
+        if (
+          requestUrl.pathname ===
+            "/api/connectai-session" &&
+          req.method ===
+            "DELETE"
+        ) {
+          res.setHeader(
+            "Set-Cookie",
+            buildExpiredAuthCookie()
+          );
 
-        res.setHeader(
-          "Content-Type",
-          "application/json; charset=utf-8"
-        );
+          sendJson(
+            res,
+            200,
+            {
+              ok:
+                true,
+            }
+          );
 
-        const apiKey =
-          process.env.ASSEMBLYAI_API_KEY;
+          return;
+        }
 
-        if (!apiKey) {
-          res.statusCode = 500;
+        // ==============================================
+        // TOKEN TEMPORÁRIO DA ASSEMBLYAI
+        // SOMENTE USUÁRIOS AUTENTICADOS
+        // ==============================================
+
+        if (
+          req.method ===
+            "GET" &&
+          requestUrl.pathname ===
+            "/api/assemblyai-token"
+        ) {
+          const authenticatedUser =
+            await getAuthenticatedUserFromRequest(
+              req
+            );
+
+          if (
+            !authenticatedUser
+          ) {
+            sendJson(
+              res,
+              401,
+              {
+                error:
+                  "Faça login para usar a transcrição.",
+              }
+            );
+
+            return;
+          }
+
+          res.setHeader(
+            "Cache-Control",
+            "no-store, no-cache, must-revalidate"
+          );
+
+          res.setHeader(
+            "Content-Type",
+            "application/json; charset=utf-8"
+          );
+
+          const apiKey =
+            process.env
+              .ASSEMBLYAI_API_KEY;
+
+          if (!apiKey) {
+            res.statusCode =
+              500;
+
+            res.end(
+              JSON.stringify({
+                error:
+                  "ASSEMBLYAI_API_KEY não configurada no servidor.",
+              })
+            );
+
+            return;
+          }
+
+          const tokenUrl =
+            new URL(
+              "https://streaming.assemblyai.com/v3/token"
+            );
+
+          tokenUrl.searchParams.set(
+            "expires_in_seconds",
+            "60"
+          );
+
+          tokenUrl.searchParams.set(
+            "max_session_duration_seconds",
+            "10800"
+          );
+
+          const assemblyResponse =
+            await fetch(
+              tokenUrl,
+              {
+                headers: {
+                  Authorization:
+                    apiKey,
+                },
+              }
+            );
+
+          const responseText =
+            await assemblyResponse.text();
+
+          if (
+            !assemblyResponse.ok
+          ) {
+            console.error(
+              "❌ Erro ao gerar token AssemblyAI:",
+              responseText
+            );
+
+            res.statusCode =
+              assemblyResponse.status;
+
+            res.end(
+              JSON.stringify({
+                error:
+                  "Não foi possível gerar o token da AssemblyAI.",
+              })
+            );
+
+            return;
+          }
+
+          res.statusCode =
+            200;
 
           res.end(
-            JSON.stringify({
-              error:
-                "ASSEMBLYAI_API_KEY não configurada no servidor.",
-            })
-          );
-
-          return;
-        }
-
-        const tokenUrl =
-          new URL(
-            "https://streaming.assemblyai.com/v3/token"
-          );
-
-        tokenUrl.searchParams.set(
-          "expires_in_seconds",
-          "60"
-        );
-
-        tokenUrl.searchParams.set(
-          "max_session_duration_seconds",
-          "10800"
-        );
-
-        const assemblyResponse =
-          await fetch(tokenUrl, {
-            headers: {
-              Authorization: apiKey,
-            },
-          });
-
-        const responseText =
-          await assemblyResponse.text();
-
-        if (!assemblyResponse.ok) {
-          console.error(
-            "❌ Erro ao gerar token AssemblyAI:",
             responseText
           );
 
-          res.statusCode =
-            assemblyResponse.status;
-
-          res.end(
-            JSON.stringify({
-              error:
-                "Não foi possível gerar o token da AssemblyAI.",
-            })
-          );
-
           return;
         }
 
-        res.statusCode = 200;
-        res.end(responseText);
+        await handle(
+          req,
+          res
+        );
+      } catch (error) {
+        console.error(
+          "Erro HTTP:",
+          error
+        );
 
-        return;
-      }
+        if (
+          !res.headersSent
+        ) {
+          res.statusCode =
+            500;
 
-      await handle(req, res);
-    } catch (error) {
-      console.error(
-        "Erro HTTP:",
-        error
-      );
+          res.setHeader(
+            "Content-Type",
+            "application/json; charset=utf-8"
+          );
+        }
 
-      if (!res.headersSent) {
-        res.statusCode = 500;
-
-        res.setHeader(
-          "Content-Type",
-          "application/json; charset=utf-8"
+        res.end(
+          JSON.stringify({
+            error:
+              "Erro interno do servidor.",
+          })
         );
       }
-
-      res.end(
-        JSON.stringify({
-          error:
-            "Erro interno do servidor.",
-        })
-      );
     }
-  }
-);
+  );
 
 // ==================================================
 // SOCKET.IO
 // ==================================================
 
-const io = new Server(httpServer);
+const io =
+  new Server(
+    httpServer
+  );
 
 io.use(
-  async (socket, next) => {
+  async (
+    socket,
+    next
+  ) => {
     const accessToken =
       getAuthCookieToken(
-        socket.handshake.headers
-          .cookie
+        socket.handshake
+          .headers.cookie
       );
 
-    if (!accessToken) {
+    if (
+      !accessToken
+    ) {
       next(
         new Error(
           "AUTH_REQUIRED"
@@ -1422,188 +1737,276 @@ io.use(
   }
 );
 
-io.on("connection", (socket) => {
-  console.log(
-    "✅ Socket conectado:",
-    socket.id
-  );
+io.on(
+  "connection",
+  (socket) => {
+    console.log(
+      "✅ Socket conectado:",
+      socket.id
+    );
 
-  socket.data.mediaStatus = {
-    ...defaultMediaStatus,
-  };
+    socket.data.mediaStatus = {
+      ...defaultMediaStatus,
+    };
 
-  socket.data.isTranscribing = false;
-  socket.data.isHost = false;
-  socket.data.captionEnabled = false;
-  socket.data.captionTargetLanguage =
-    "pt-BR";
+    socket.data.isTranscribing =
+      false;
 
-  // ==================================================
-  // ENTRAR NA SALA
-  // ==================================================
+    socket.data.isHost =
+      false;
 
-  socket.on(
-    "join-room",
-    ({
-      roomId,
-      participantName,
-      participantSessionId,
-      mediaStatus,
-    }) => {
-      if (!roomId) {
-        return;
-      }
+    socket.data.captionEnabled =
+      false;
 
-      const roomName =
-        getRoomName(roomId);
+    socket.data.captionTargetLanguage =
+      "pt-BR";
 
-      cancelRoomCleanup(roomName);
+    // ==================================================
+    // ENTRAR NA SALA
+    // ==================================================
 
-      const currentRoom =
-        io.sockets.adapter.rooms.get(
+    socket.on(
+      "join-room",
+      ({
+        roomId,
+        participantName,
+        participantSessionId,
+        mediaStatus,
+      }) => {
+        if (!roomId) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        cancelRoomCleanup(
           roomName
         );
 
-      const existingParticipantIds =
-        currentRoom
-          ? Array.from(currentRoom)
-          : [];
+        const normalizedName =
+          normalizeParticipantName(
+            participantName,
+            socket.id
+          );
 
-      if (
-        existingParticipantIds.length >=
-        MAX_PARTICIPANTS
-      ) {
-        socket.emit("room-full");
-        return;
-      }
+        const normalizedSessionId =
+          normalizeParticipantSessionId(
+            participantSessionId,
+            socket.id
+          );
 
-      const normalizedName =
-        normalizeParticipantName(
-          participantName,
-          socket.id
-        );
+        const currentRoom =
+          io.sockets.adapter.rooms.get(
+            roomName
+          );
 
-      const normalizedSessionId =
-        normalizeParticipantSessionId(
-          participantSessionId,
-          socket.id
-        );
+        const existingParticipantIds =
+          currentRoom
+            ? Array.from(
+                currentRoom
+              )
+            : [];
 
-      if (
-        !roomHostSessions.has(
+        // ==================================================
+        // CORREÇÃO DE PARTICIPANTES FANTASMAS
+        //
+        // Se a mesma sessão entrar novamente após:
+        // - perda de internet;
+        // - mudança de Wi-Fi / 4G / 5G;
+        // - atualização da página;
+        // - reconexão do Socket.IO;
+        //
+        // removemos o socket antigo antes de registrar o novo.
+        // ==================================================
+
+        const duplicateParticipantIds =
+          existingParticipantIds.filter(
+            (
+              participantId
+            ) => {
+              if (
+                participantId ===
+                socket.id
+              ) {
+                return false;
+              }
+
+              const participantSocket =
+                io.sockets.sockets.get(
+                  participantId
+                );
+
+              if (
+                !participantSocket
+              ) {
+                return false;
+              }
+
+              const sameSession =
+                participantSocket
+                  .data
+                  .participantSessionId ===
+                normalizedSessionId;
+
+              const sameAuthenticatedUser =
+                participantSocket
+                  .data
+                  .authUserId ===
+                socket.data
+                  .authUserId;
+
+              return (
+                sameSession &&
+                sameAuthenticatedUser
+              );
+            }
+          );
+
+        for (
+          const duplicateId
+          of duplicateParticipantIds
+        ) {
+          const duplicateSocket =
+            io.sockets.sockets.get(
+              duplicateId
+            );
+
+          if (
+            !duplicateSocket
+          ) {
+            continue;
+          }
+
+          console.log(
+            `♻️ Removendo conexão antiga de ${normalizedName}: ${duplicateId}`
+          );
+
+          duplicateSocket.emit(
+            "session-replaced",
+            {
+              message:
+                "Uma conexão mais recente desta sessão foi detectada.",
+            }
+          );
+
+          duplicateSocket.disconnect(
+            true
+          );
+        }
+
+        // Consideramos apenas participantes realmente ativos
+        // para validar o limite da sala.
+        const activeParticipantIds =
+          existingParticipantIds.filter(
+            (
+              participantId
+            ) =>
+              !duplicateParticipantIds.includes(
+                participantId
+              )
+          );
+
+        if (
+          activeParticipantIds.length >=
+          MAX_PARTICIPANTS
+        ) {
+          socket.emit(
+            "room-full"
+          );
+
+          return;
+        }
+
+        if (
+          !roomHostSessions.has(
+            roomName
+          )
+        ) {
+          roomHostSessions.set(
+            roomName,
+            normalizedSessionId
+          );
+
+          roomStartedAt.set(
+            roomName,
+            Date.now()
+          );
+        }
+
+        const isHost =
+          roomHostSessions.get(
+            roomName
+          ) ===
+          normalizedSessionId;
+
+        socket.data.roomName =
+          roomName;
+
+        socket.data.roomId =
+          roomId;
+
+        socket.data.participantName =
+          normalizedName;
+
+        socket.data.participantSessionId =
+          normalizedSessionId;
+
+        socket.data.isHost =
+          isHost;
+
+        socket.data.mediaStatus =
+          normalizeMediaStatus(
+            mediaStatus
+          );
+
+        socket.data.isTranscribing =
+          false;
+
+        // Neste ponto os sockets duplicados já foram removidos.
+        const existingParticipants =
+          getRoomParticipants(
+            roomName
+          );
+
+        socket.join(
           roomName
-        )
-      ) {
-        roomHostSessions.set(
-          roomName,
-          normalizedSessionId
         );
 
-        roomStartedAt.set(
-          roomName,
-          Date.now()
-        );
-      }
-
-      const isHost =
-        roomHostSessions.get(
-          roomName
-        ) === normalizedSessionId;
-
-      socket.data.roomName = roomName;
-      socket.data.roomId = roomId;
-
-      socket.data.participantName =
-        normalizedName;
-
-      socket.data.participantSessionId =
-        normalizedSessionId;
-
-      socket.data.isHost = isHost;
-
-      socket.data.mediaStatus =
-        normalizeMediaStatus(mediaStatus);
-
-      socket.data.isTranscribing =
-        false;
-
-      const existingParticipants =
-        getRoomParticipants(roomName);
-
-      socket.join(roomName);
-
-      socket.emit(
-        "caption-demand-state",
-        {
-          active:
-            hasCaptionDemand(
-              roomName
-            ),
-        }
-      );
-
-      console.log("");
-      console.log(
-        `👤 ${normalizedName} entrou na sala ${roomId}${
-          isHost ? " como anfitrião" : ""
-        }`
-      );
-      console.log(
-        `🆔 Socket: ${socket.id}`
-      );
-      console.log("");
-
-      socket.emit(
-        "participant-identity",
-        {
-          participantId:
-            socket.id,
-
-          participantName:
-            normalizedName,
-
-          isHost,
-        }
-      );
-
-      socket.emit(
-        "existing-participants",
-        {
-          participants:
-            existingParticipants,
-        }
-      );
-
-      socket.emit(
-        "transcript-history",
-        {
-          entries:
-            getRoomTranscript(
-              roomName
-            ),
-        }
-      );
-
-      if (
-        isHost &&
-        roomReports.has(roomName)
-      ) {
         socket.emit(
-          "meeting-report-ready",
+          "caption-demand-state",
           {
-            report:
-              roomReports.get(
+            active:
+              hasCaptionDemand(
                 roomName
               ),
-            cached: true,
           }
         );
-      }
 
-      socket
-        .to(roomName)
-        .emit(
-          "participant-joined",
+        console.log(
+          ""
+        );
+
+        console.log(
+          `👤 ${normalizedName} entrou na sala ${roomId}${
+            isHost
+              ? " como anfitrião"
+              : ""
+          }`
+        );
+
+        console.log(
+          `🆔 Socket: ${socket.id}`
+        );
+
+        console.log(
+          ""
+        );
+
+        socket.emit(
+          "participant-identity",
           {
             participantId:
               socket.id,
@@ -1611,685 +2014,842 @@ io.on("connection", (socket) => {
             participantName:
               normalizedName,
 
-            mediaStatus:
-              socket.data.mediaStatus,
-
-            isTranscribing:
-              false,
-
             isHost,
           }
         );
 
-      broadcastRoomState(roomName);
-    }
-  );
-
-  // ==================================================
-  // STATUS DE MÍDIA
-  // ==================================================
-
-  socket.on(
-    "media-status-change",
-    ({
-      roomId,
-      status,
-    }) => {
-      if (!roomId || !status) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      const nextStatus =
-        normalizeMediaStatus(
-          status,
-          socket.data.mediaStatus ||
-            defaultMediaStatus
-        );
-
-      socket.data.mediaStatus =
-        nextStatus;
-
-      socket
-        .to(roomName)
-        .emit(
-          "participant-media-status",
+        socket.emit(
+          "existing-participants",
           {
-            participantId:
-              socket.id,
-
-            participantName:
-              normalizeParticipantName(
-                socket.data
-                  .participantName,
-                socket.id
-              ),
-
-            mediaStatus:
-              nextStatus,
-          }
-        );
-    }
-  );
-
-  // ==================================================
-  // STATUS DA TRANSCRIÇÃO
-  // ==================================================
-
-  socket.on(
-    "transcription-status-change",
-    ({
-      roomId,
-      isTranscribing,
-    }) => {
-      if (
-        !roomId ||
-        typeof isTranscribing !==
-          "boolean"
-      ) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      socket.data.isTranscribing =
-        isTranscribing;
-
-      socket
-        .to(roomName)
-        .emit(
-          "participant-transcription-status",
-          {
-            participantId:
-              socket.id,
-
-            participantName:
-              normalizeParticipantName(
-                socket.data
-                  .participantName,
-                socket.id
-              ),
-
-            isTranscribing,
+            participants:
+              existingParticipants,
           }
         );
 
-      broadcastRoomState(roomName);
-    }
-  );
-
-  // ==================================================
-  // LEGENDAS AO VIVO TRADUZIDAS PARA PT-BR
-  // ==================================================
-
-  socket.on(
-    "caption-preference-change",
-    ({
-      roomId,
-      enabled,
-      targetLanguage,
-    } = {}) => {
-      if (
-        !roomId ||
-        typeof enabled !==
-          "boolean"
-      ) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      socket.data.captionEnabled =
-        enabled;
-
-      socket.data.captionTargetLanguage =
-        targetLanguage ===
-        "pt-BR"
-          ? "pt-BR"
-          : "pt-BR";
-
-      broadcastCaptionDemandState(
-        roomName
-      );
-    }
-  );
-
-  // ==================================================
-  // FALA FINAL DA ASSEMBLYAI
-  // ==================================================
-
-  socket.on(
-    "transcript-entry",
-    ({
-      roomId,
-      entry,
-    }) => {
-      if (
-        !roomId ||
-        !entry?.text
-      ) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      const text =
-        String(entry.text)
-          .trim()
-          .slice(0, 5000);
-
-      if (!text) {
-        return;
-      }
-
-      const participantName =
-        normalizeParticipantName(
-          socket.data.participantName,
-          socket.id
+        socket.emit(
+          "transcript-history",
+          {
+            entries:
+              getRoomTranscript(
+                roomName
+              ),
+          }
         );
 
-      const savedEntry = {
-        id:
-          entry.id ||
-          `${Date.now()}-${socket.id}`,
-
-        senderId:
-          socket.id,
-
-        senderName:
-          participantName,
-
-        text,
-
-        time:
-          entry.time ||
-          new Date()
-            .toLocaleTimeString(
-              "pt-BR",
-              {
-                hour: "2-digit",
-                minute: "2-digit",
-              }
-            ),
-
-        createdAt:
-          Number(
-            entry.createdAt
-          ) || Date.now(),
-      };
-
-      const transcript =
-        getRoomTranscript(roomName);
-
-      const alreadyExists =
-        transcript.some(
-          (item) =>
-            item.id ===
-            savedEntry.id
-        );
-
-      if (alreadyExists) {
-        return;
-      }
-
-      transcript.push(savedEntry);
-
-      transcript.sort(
-        (a, b) =>
-          a.createdAt -
-          b.createdAt
-      );
-
-      if (
-        transcript.length > 2000
-      ) {
-        transcript.splice(
-          0,
-          transcript.length -
-            2000
-        );
-      }
-
-      roomReports.delete(roomName);
-
-      console.log(
-        `📝 ${participantName}: ${text}`
-      );
-
-      io.to(roomName).emit(
-        "transcript-entry",
-        savedEntry
-      );
-
-      void translateAndEmitCaption(
-        roomName,
-        savedEntry
-      );
-    }
-  );
-
-  socket.on(
-    "request-transcript",
-    ({ roomId }) => {
-      if (!roomId) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      socket.emit(
-        "transcript-history",
-        {
-          entries:
-            getRoomTranscript(
-              roomName
-            ),
-        }
-      );
-    }
-  );
-
-  // ==================================================
-  // RELATÓRIO DA REUNIÃO - SOMENTE ANFITRIÃO
-  // ==================================================
-
-  socket.on(
-    "generate-meeting-report",
-    async (
-      { roomId } = {},
-      callback
-    ) => {
-      const respond =
-        typeof callback === "function"
-          ? callback
-          : () => {};
-
-      if (!roomId) {
-        respond({
-          ok: false,
-          error:
-            "Sala inválida.",
-        });
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        respond({
-          ok: false,
-          error:
-            "Você não está nesta sala.",
-        });
-        return;
-      }
-
-      if (
-        socket.data.isHost !== true
-      ) {
-        respond({
-          ok: false,
-          error:
-            "Apenas o anfitrião pode gerar o relatório da reunião.",
-        });
-        return;
-      }
-
-      const transcript =
-        getRoomTranscript(roomName);
-
-      if (
-        transcript.length === 0
-      ) {
-        respond({
-          ok: false,
-          error:
-            "Ainda não há falas transcritas para analisar.",
-        });
-        return;
-      }
-
-      const cachedReport =
-        roomReports.get(roomName);
-
-      if (cachedReport) {
-        respond({
-          ok: true,
-          report:
-            cachedReport,
-          cached: true,
-        });
-        return;
-      }
-
-      try {
-        let reportPromise =
-          roomReportPromises.get(
+        if (
+          isHost &&
+          roomReports.has(
             roomName
-          );
+          )
+        ) {
+          socket.emit(
+            "meeting-report-ready",
+            {
+              report:
+                roomReports.get(
+                  roomName
+                ),
 
-        if (!reportPromise) {
-          reportPromise =
-            generateMeetingReport(
-              roomName,
-              roomId
-            );
-
-          roomReportPromises.set(
-            roomName,
-            reportPromise
+              cached:
+                true,
+            }
           );
         }
 
-        const report =
-          await reportPromise;
+        socket
+          .to(roomName)
+          .emit(
+            "participant-joined",
+            {
+              participantId:
+                socket.id,
 
-        roomReports.set(
-          roomName,
-          report
-        );
+              participantName:
+                normalizedName,
 
-        respond({
-          ok: true,
-          report,
-          cached: false,
-        });
-      } catch (error) {
-        console.error(
-          "❌ Erro ao gerar relatório:",
-          error
-        );
+              mediaStatus:
+                socket.data
+                  .mediaStatus,
 
-        respond({
-          ok: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "Não foi possível gerar o relatório.",
-        });
-      } finally {
-        roomReportPromises.delete(
+              isTranscribing:
+                false,
+
+              isHost,
+            }
+          );
+
+        broadcastRoomState(
           roomName
         );
       }
-    }
-  );
+    );
 
-  // ==================================================
-  // WEBRTC
-  // ==================================================
+    // ==================================================
+    // STATUS DE MÍDIA
+    // ==================================================
 
-  socket.on(
-    "webrtc-offer",
-    ({
-      targetId,
-      offer,
-    }) => {
-      if (!targetId || !offer) {
-        return;
+    socket.on(
+      "media-status-change",
+      ({
+        roomId,
+        status,
+      }) => {
+        if (
+          !roomId ||
+          !status
+        ) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        const nextStatus =
+          normalizeMediaStatus(
+            status,
+            socket.data
+              .mediaStatus ||
+              defaultMediaStatus
+          );
+
+        socket.data.mediaStatus =
+          nextStatus;
+
+        socket
+          .to(roomName)
+          .emit(
+            "participant-media-status",
+            {
+              participantId:
+                socket.id,
+
+              participantName:
+                normalizeParticipantName(
+                  socket.data
+                    .participantName,
+                  socket.id
+                ),
+
+              mediaStatus:
+                nextStatus,
+            }
+          );
       }
+    );
 
-      io.to(targetId).emit(
-        "webrtc-offer",
-        {
+    // ==================================================
+    // STATUS DA TRANSCRIÇÃO
+    // ==================================================
+
+    socket.on(
+      "transcription-status-change",
+      ({
+        roomId,
+        isTranscribing,
+      }) => {
+        if (
+          !roomId ||
+          typeof isTranscribing !==
+            "boolean"
+        ) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        socket.data.isTranscribing =
+          isTranscribing;
+
+        socket
+          .to(roomName)
+          .emit(
+            "participant-transcription-status",
+            {
+              participantId:
+                socket.id,
+
+              participantName:
+                normalizeParticipantName(
+                  socket.data
+                    .participantName,
+                  socket.id
+                ),
+
+              isTranscribing,
+            }
+          );
+
+        broadcastRoomState(
+          roomName
+        );
+      }
+    );
+
+    // ==================================================
+    // LEGENDAS AO VIVO TRADUZIDAS PARA PT-BR
+    // ==================================================
+
+    socket.on(
+      "caption-preference-change",
+      ({
+        roomId,
+        enabled,
+        targetLanguage,
+      } = {}) => {
+        if (
+          !roomId ||
+          typeof enabled !==
+            "boolean"
+        ) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        socket.data.captionEnabled =
+          enabled;
+
+        socket.data.captionTargetLanguage =
+          targetLanguage ===
+          "pt-BR"
+            ? "pt-BR"
+            : "pt-BR";
+
+        broadcastCaptionDemandState(
+          roomName
+        );
+      }
+    );
+
+    // ==================================================
+    // FALA FINAL DA ASSEMBLYAI
+    // ==================================================
+
+    socket.on(
+      "transcript-entry",
+      ({
+        roomId,
+        entry,
+      }) => {
+        if (
+          !roomId ||
+          !entry?.text
+        ) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        const text =
+          String(
+            entry.text
+          )
+            .trim()
+            .slice(
+              0,
+              5000
+            );
+
+        if (!text) {
+          return;
+        }
+
+        const participantName =
+          normalizeParticipantName(
+            socket.data
+              .participantName,
+            socket.id
+          );
+
+        const savedEntry = {
+          id:
+            entry.id ||
+            `${Date.now()}-${socket.id}`,
+
           senderId:
             socket.id,
 
           senderName:
-            normalizeParticipantName(
-              socket.data
-                .participantName,
-              socket.id
-            ),
+            participantName,
 
-          offer,
+          text,
+
+          time:
+            entry.time ||
+            new Date()
+              .toLocaleTimeString(
+                "pt-BR",
+                {
+                  hour:
+                    "2-digit",
+
+                  minute:
+                    "2-digit",
+                }
+              ),
+
+          createdAt:
+            Number(
+              entry.createdAt
+            ) ||
+            Date.now(),
+        };
+
+        const transcript =
+          getRoomTranscript(
+            roomName
+          );
+
+        const alreadyExists =
+          transcript.some(
+            (item) =>
+              item.id ===
+              savedEntry.id
+          );
+
+        if (
+          alreadyExists
+        ) {
+          return;
         }
-      );
-    }
-  );
 
-  socket.on(
-    "webrtc-answer",
-    ({
-      targetId,
-      answer,
-    }) => {
-      if (
-        !targetId ||
-        !answer
-      ) {
-        return;
-      }
-
-      io.to(targetId).emit(
-        "webrtc-answer",
-        {
-          senderId:
-            socket.id,
-
-          senderName:
-            normalizeParticipantName(
-              socket.data
-                .participantName,
-              socket.id
-            ),
-
-          answer,
-        }
-      );
-    }
-  );
-
-  socket.on(
-    "webrtc-ice-candidate",
-    ({
-      targetId,
-      candidate,
-    }) => {
-      if (
-        !targetId ||
-        !candidate
-      ) {
-        return;
-      }
-
-      io.to(targetId).emit(
-        "webrtc-ice-candidate",
-        {
-          senderId:
-            socket.id,
-
-          candidate,
-        }
-      );
-    }
-  );
-
-  // ==================================================
-  // CHAT
-  // ==================================================
-
-  socket.on(
-    "send-chat-message",
-    ({
-      roomId,
-      message,
-    }) => {
-      if (
-        !roomId ||
-        !message?.text
-      ) {
-        return;
-      }
-
-      const roomName =
-        getRoomName(roomId);
-
-      if (
-        socket.data.roomName !==
-        roomName
-      ) {
-        return;
-      }
-
-      const participantName =
-        normalizeParticipantName(
-          socket.data.participantName,
-          socket.id
+        transcript.push(
+          savedEntry
         );
 
-      socket
-        .to(roomName)
-        .emit(
-          "chat-message",
-          {
-            ...message,
+        transcript.sort(
+          (a, b) =>
+            a.createdAt -
+            b.createdAt
+        );
 
+        if (
+          transcript.length >
+          2000
+        ) {
+          transcript.splice(
+            0,
+            transcript.length -
+              2000
+          );
+        }
+
+        roomReports.delete(
+          roomName
+        );
+
+        console.log(
+          `📝 ${participantName}: ${text}`
+        );
+
+        io.to(roomName).emit(
+          "transcript-entry",
+          savedEntry
+        );
+
+        void translateAndEmitCaption(
+          roomName,
+          savedEntry
+        );
+      }
+    );
+
+    socket.on(
+      "request-transcript",
+      ({
+        roomId,
+      }) => {
+        if (!roomId) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        socket.emit(
+          "transcript-history",
+          {
+            entries:
+              getRoomTranscript(
+                roomName
+              ),
+          }
+        );
+      }
+    );
+
+    // ==================================================
+    // RELATÓRIO DA REUNIÃO - SOMENTE ANFITRIÃO
+    // ==================================================
+
+    socket.on(
+      "generate-meeting-report",
+      async (
+        {
+          roomId,
+        } = {},
+        callback
+      ) => {
+        const respond =
+          typeof callback ===
+          "function"
+            ? callback
+            : () => {};
+
+        if (!roomId) {
+          respond({
+            ok:
+              false,
+
+            error:
+              "Sala inválida.",
+          });
+
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          respond({
+            ok:
+              false,
+
+            error:
+              "Você não está nesta sala.",
+          });
+
+          return;
+        }
+
+        if (
+          socket.data
+            .isHost !==
+          true
+        ) {
+          respond({
+            ok:
+              false,
+
+            error:
+              "Apenas o anfitrião pode gerar o relatório da reunião.",
+          });
+
+          return;
+        }
+
+        const transcript =
+          getRoomTranscript(
+            roomName
+          );
+
+        if (
+          transcript.length ===
+          0
+        ) {
+          respond({
+            ok:
+              false,
+
+            error:
+              "Ainda não há falas transcritas para analisar.",
+          });
+
+          return;
+        }
+
+        const cachedReport =
+          roomReports.get(
+            roomName
+          );
+
+        if (
+          cachedReport
+        ) {
+          respond({
+            ok:
+              true,
+
+            report:
+              cachedReport,
+
+            cached:
+              true,
+          });
+
+          return;
+        }
+
+        try {
+          let reportPromise =
+            roomReportPromises.get(
+              roomName
+            );
+
+          if (
+            !reportPromise
+          ) {
+            reportPromise =
+              generateMeetingReport(
+                roomName,
+                roomId
+              );
+
+            roomReportPromises.set(
+              roomName,
+              reportPromise
+            );
+          }
+
+          const report =
+            await reportPromise;
+
+          roomReports.set(
+            roomName,
+            report
+          );
+
+          respond({
+            ok:
+              true,
+
+            report,
+
+            cached:
+              false,
+          });
+        } catch (error) {
+          console.error(
+            "❌ Erro ao gerar relatório:",
+            error
+          );
+
+          respond({
+            ok:
+              false,
+
+            error:
+              error instanceof
+                Error
+                ? error.message
+                : "Não foi possível gerar o relatório.",
+          });
+        } finally {
+          roomReportPromises.delete(
+            roomName
+          );
+        }
+      }
+    );
+
+    // ==================================================
+    // WEBRTC
+    // ==================================================
+
+    socket.on(
+      "webrtc-offer",
+      ({
+        targetId,
+        offer,
+      }) => {
+        if (
+          !targetId ||
+          !offer
+        ) {
+          return;
+        }
+
+        io.to(
+          targetId
+        ).emit(
+          "webrtc-offer",
+          {
             senderId:
               socket.id,
 
             senderName:
-              participantName,
+              normalizeParticipantName(
+                socket.data
+                  .participantName,
+                socket.id
+              ),
+
+            offer,
           }
         );
-    }
-  );
-
-  // ==================================================
-  // SAÍDA
-  // ==================================================
-
-  socket.on(
-    "disconnecting",
-    () => {
-      const roomName =
-        socket.data.roomName;
-
-      if (!roomName) {
-        return;
       }
+    );
 
-      const participantName =
-        normalizeParticipantName(
-          socket.data.participantName,
-          socket.id
+    socket.on(
+      "webrtc-answer",
+      ({
+        targetId,
+        answer,
+      }) => {
+        if (
+          !targetId ||
+          !answer
+        ) {
+          return;
+        }
+
+        io.to(
+          targetId
+        ).emit(
+          "webrtc-answer",
+          {
+            senderId:
+              socket.id,
+
+            senderName:
+              normalizeParticipantName(
+                socket.data
+                  .participantName,
+                socket.id
+              ),
+
+            answer,
+          }
         );
+      }
+    );
 
-      socket.data.captionEnabled =
-        false;
+    socket.on(
+      "webrtc-ice-candidate",
+      ({
+        targetId,
+        candidate,
+      }) => {
+        if (
+          !targetId ||
+          !candidate
+        ) {
+          return;
+        }
 
-      broadcastCaptionDemandState(
-        roomName,
-        socket.id
-      );
+        io.to(
+          targetId
+        ).emit(
+          "webrtc-ice-candidate",
+          {
+            senderId:
+              socket.id,
 
-      const remainingParticipants =
-        getRoomParticipants(
+            candidate,
+          }
+        );
+      }
+    );
+
+    // ==================================================
+    // CHAT
+    // ==================================================
+
+    socket.on(
+      "send-chat-message",
+      ({
+        roomId,
+        message,
+      }) => {
+        if (
+          !roomId ||
+          !message?.text
+        ) {
+          return;
+        }
+
+        const roomName =
+          getRoomName(
+            roomId
+          );
+
+        if (
+          socket.data
+            .roomName !==
+          roomName
+        ) {
+          return;
+        }
+
+        const participantName =
+          normalizeParticipantName(
+            socket.data
+              .participantName,
+            socket.id
+          );
+
+        socket
+          .to(roomName)
+          .emit(
+            "chat-message",
+            {
+              ...message,
+
+              senderId:
+                socket.id,
+
+              senderName:
+                participantName,
+            }
+          );
+      }
+    );
+
+    // ==================================================
+    // SAÍDA
+    // ==================================================
+
+    socket.on(
+      "disconnecting",
+      () => {
+        const roomName =
+          socket.data
+            .roomName;
+
+        if (
+          !roomName
+        ) {
+          return;
+        }
+
+        const participantName =
+          normalizeParticipantName(
+            socket.data
+              .participantName,
+            socket.id
+          );
+
+        socket.data.captionEnabled =
+          false;
+
+        broadcastCaptionDemandState(
           roomName,
           socket.id
         );
 
-      socket
-        .to(roomName)
-        .emit(
-          "participant-left",
-          {
-            participantId:
-              socket.id,
+        const remainingParticipants =
+          getRoomParticipants(
+            roomName,
+            socket.id
+          );
 
-            participantName,
-          }
-        );
+        socket
+          .to(roomName)
+          .emit(
+            "participant-left",
+            {
+              participantId:
+                socket.id,
 
-      socket
-        .to(roomName)
-        .emit(
-          "room-participants-state",
-          {
-            count:
-              remainingParticipants.length,
+              participantName,
+            }
+          );
 
-            participants:
-              remainingParticipants,
-          }
-        );
+        socket
+          .to(roomName)
+          .emit(
+            "room-participants-state",
+            {
+              count:
+                remainingParticipants.length,
 
-      socket
-        .to(roomName)
-        .emit(
-          "room-participants",
-          {
-            count:
-              remainingParticipants.length,
-          }
-        );
+              participants:
+                remainingParticipants,
+            }
+          );
 
-      if (
-        remainingParticipants.length ===
-        0
-      ) {
-        scheduleRoomCleanup(
-          roomName
+        socket
+          .to(roomName)
+          .emit(
+            "room-participants",
+            {
+              count:
+                remainingParticipants.length,
+            }
+          );
+
+        if (
+          remainingParticipants.length ===
+          0
+        ) {
+          scheduleRoomCleanup(
+            roomName
+          );
+        }
+      }
+    );
+
+    socket.on(
+      "disconnect",
+      () => {
+        console.log(
+          "❌ Socket desconectado:",
+          socket.id
         );
       }
-    }
-  );
-
-  socket.on(
-    "disconnect",
-    () => {
-      console.log(
-        "❌ Socket desconectado:",
-        socket.id
-      );
-    }
-  );
-});
+    );
+  }
+);
 
 // ==================================================
 // INICIAR SERVIDOR
@@ -2299,13 +2859,20 @@ httpServer.listen(
   port,
   hostname,
   () => {
-    console.log("");
+    console.log(
+      ""
+    );
+
     console.log(
       "🚀 ConnectAI iniciado"
     );
+
     console.log(
       `🌐 Local: http://localhost:${port}`
     );
-    console.log("");
+
+    console.log(
+      ""
+    );
   }
 );
